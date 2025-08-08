@@ -1,4 +1,4 @@
-name: Deploy (self-hosted, with proxy)
+name: Deploy (self-hosted, port 80/8081)
 
 on:
   push:
@@ -85,7 +85,7 @@ jobs:
           set_kv MYSQL_USER "${DB_USERNAME}"
           set_kv MYSQL_PASSWORD "${DB_PASSWORD}"
 
-          # Proxy for build/runtime
+          # Proxy for build/runtime (edit/remove if not using a proxy)
           set_kv HTTP_PROXY "http://10.2.120.222:8100"
           set_kv HTTPS_PROXY "http://10.2.120.222:8100"
           set_kv NO_PROXY "localhost,127.0.0.1,::1,app,nginx,mysql,phpmyadmin"
@@ -97,6 +97,33 @@ jobs:
           # Host UID/GID for permissions
           set_kv UID "$(id -u)"
           set_kv GID "$(id -g)"
+
+      - name: Ensure override for ports 80/8081 (if file missing)
+        run: |
+          set -eo pipefail
+          cd "$PROD_PATH"
+          if [ ! -f docker-compose.override.yml ]; then
+            cat > docker-compose.override.yml <<'YAML'
+            services:
+              nginx:
+                ports:
+                  - "80:80"
+              phpmyadmin:
+                ports:
+                  - "8081:80"
+            YAML
+          fi
+
+      - name: (Optional) Open firewall ports 80 and 8081
+        run: |
+          set -eo pipefail
+          if command -v ufw >/dev/null 2>&1; then
+            sudo ufw allow 80/tcp || true
+            sudo ufw allow 8081/tcp || true
+            sudo ufw reload || true
+          else
+            echo "ufw not installed; ensure ports 80 and 8081 are reachable."
+          fi
 
       - name: Bring up containers
         run: |
