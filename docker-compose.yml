@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,app,nginx,mysql,phpmyadmin}
     container_name: laravel_app
     restart: unless-stopped
     volumes:
@@ -14,7 +18,11 @@ services:
       DB_DATABASE: ${DB_DATABASE:-laravel_db}
       DB_USERNAME: ${DB_USERNAME:-laravel}
       DB_PASSWORD: ${DB_PASSWORD:-secret}
-      # Optional (not required, but available if you want to use them)
+      # Proxy for runtime tools (composer/curl). NO_PROXY keeps internal traffic local.
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,app,nginx,mysql,phpmyadmin}
+      # Optional metadata
       APP_NAME: ${APP_NAME:-CTO CRUD}
       APP_URL: ${APP_URL:-http://localhost:8000}
       USER_ID: ${UID:-1000}

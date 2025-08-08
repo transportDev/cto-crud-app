@@ -1,4 +1,4 @@
-name: Deploy (self-hosted)
+name: Deploy (self-hosted, with proxy)
 
 on:
   push:
@@ -9,9 +9,8 @@ jobs:
   deploy:
     runs-on: self-hosted
 
-    # Secrets you actually use with the runner (no SSH needed)
     env:
-      PROD_PATH: ${{ secrets.PROD_PATH }} # absolute path on the server (e.g., /home/snort/docker/cto-crud-app)
+      PROD_PATH: ${{ secrets.PROD_PATH }}
       DB_DATABASE: ${{ secrets.DB_DATABASE }}
       DB_USERNAME: ${{ secrets.DB_USERNAME }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
@@ -36,11 +35,9 @@ jobs:
       - name: Ensure Docker Compose plugin (user-space)
         run: |
           set -eo pipefail
-          # Pick docker or sudo docker depending on permission
           if docker ps >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="sudo docker"; fi
           echo "DOCKER=$DOCKER" >> $GITHUB_ENV
 
-          # Install compose plugin into ~/.docker if missing (no sudo)
           if ! $DOCKER compose version >/dev/null 2>&1; then
             mkdir -p ~/.docker/cli-plugins
             curl -sSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
@@ -52,15 +49,14 @@ jobs:
         run: |
           set -eo pipefail
           mkdir -p "$PROD_PATH"
-          # Use rsync if available, otherwise tar fallback (no delete)
           if command -v rsync >/dev/null 2>&1; then
             rsync -rlgoDzvc --delete --exclude-from=.deployignore ./ "$PROD_PATH"/
           else
-            echo "rsync not found; using tar fallback (no --delete). Consider installing rsync for cleaner syncs."
+            echo "rsync not found; using tar fallback (no --delete)."
             tar -cf - --exclude-vcs -X .deployignore . | tar -C "$PROD_PATH" -xf -
           fi
 
-      - name: Write/Update Compose .env
+      - name: Write/Update Compose .env (includes proxy)
         run: |
           set -eo pipefail
           cd "$PROD_PATH"
@@ -76,20 +72,25 @@ jobs:
             fi
           }
 
-          # App DB connection for Laravel
+          # DB for app
           set_kv DB_HOST "mysql"
           set_kv DB_PORT "3306"
           set_kv DB_DATABASE "${DB_DATABASE}"
           set_kv DB_USERNAME "${DB_USERNAME}"
           set_kv DB_PASSWORD "${DB_PASSWORD}"
 
-          # MySQL init (first run only) mapped from DB_* so you maintain one set
+          # MySQL init (first run only)
           set_kv MYSQL_ROOT_PASSWORD "${MYSQL_ROOT_PASSWORD}"
           set_kv MYSQL_DATABASE "${DB_DATABASE}"
           set_kv MYSQL_USER "${DB_USERNAME}"
           set_kv MYSQL_PASSWORD "${DB_PASSWORD}"
 
-          # Optional app metadata (kept if not provided)
+          # Proxy for build/runtime
+          set_kv HTTP_PROXY "http://10.2.120.222:8100"
+          set_kv HTTPS_PROXY "http://10.2.120.222:8100"
+          set_kv NO_PROXY "localhost,127.0.0.1,::1,app,nginx,mysql,phpmyadmin"
+
+          # Optional app metadata
           [ -n "${PROD_APP_NAME}" ] && set_kv APP_NAME "${PROD_APP_NAME}"
           [ -n "${PROD_APP_URL}" ] && set_kv APP_URL "${PROD_APP_URL}"
 
@@ -116,12 +117,10 @@ jobs:
 
             set_kv(){ k="$1"; v="$2"; if grep -Eq "^$k[[:space:]]*[:=]" .env; then sed -i -E "s#^$k[[:space:]]*[:=][[:space:]]*.*#$k=$v#g" .env; else echo "$k=$v" >> .env; fi; }
 
-            # Force production; set optional fields if present
             set_kv APP_ENV production
             [ -n "$APP_NAME" ] && set_kv APP_NAME "$APP_NAME"
             [ -n "$APP_URL" ] && set_kv APP_URL "$APP_URL"
 
-            # DB settings from container env (passed via Compose .env)
             set_kv DB_CONNECTION "${DB_CONNECTION:-mysql}"
             set_kv DB_HOST "${DB_HOST:-mysql}"
             set_kv DB_PORT "${DB_PORT:-3306}"
