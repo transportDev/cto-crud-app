@@ -17,10 +17,10 @@ jobs:
       PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
       PROD_PATH: ${{ secrets.PROD_PATH }}
       GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
-      PROD_DB_DATABASE: ${{ secrets.PROD_DB_DATABASE }}
-      PROD_DB_USERNAME: ${{ secrets.PROD_DB_USERNAME }}
-      PROD_DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
-      PROD_MYSQL_ROOT_PASSWORD: ${{ secrets.PROD_MYSQL_ROOT_PASSWORD }}
+      DB_DATABASE: ${{ secrets.DB_DATABASE }}
+      DB_USERNAME: ${{ secrets.DB_USERNAME }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
       PROD_APP_NAME: ${{ secrets.PROD_APP_NAME }}
       PROD_APP_URL: ${{ secrets.PROD_APP_URL }}
 
@@ -28,7 +28,7 @@ jobs:
       - name: Validate required secrets
         run: |
           missing=0
-          for v in PROD_HOST PROD_USER PROD_SSH_KEY PROD_PATH GIT_TOKEN PROD_DB_DATABASE PROD_DB_USERNAME PROD_DB_PASSWORD PROD_MYSQL_ROOT_PASSWORD; do
+          for v in PROD_HOST PROD_USER PROD_SSH_KEY PROD_PATH GIT_TOKEN DB_DATABASE DB_USERNAME DB_PASSWORD MYSQL_ROOT_PASSWORD; do
             if [ -z "${!v}" ]; then echo "::error::Missing secret: $v"; missing=1; fi
           done
           if [ "$missing" -ne 0 ]; then exit 1; fi
@@ -41,7 +41,7 @@ jobs:
           key: ${{ env.PROD_SSH_KEY }}
           # If you use a custom SSH port, uncomment:
           # port: ${{ env.PROD_SSH_PORT }}
-          envs: PROD_PATH,GIT_TOKEN,PROD_DB_DATABASE,PROD_DB_USERNAME,PROD_DB_PASSWORD,PROD_MYSQL_ROOT_PASSWORD,PROD_APP_NAME,PROD_APP_URL
+          envs: PROD_PATH,GIT_TOKEN,DB_DATABASE,DB_USERNAME,DB_PASSWORD,MYSQL_ROOT_PASSWORD,PROD_APP_NAME,PROD_APP_URL
           script: |
             set -eo pipefail
 
@@ -100,15 +100,15 @@ jobs:
             # DB for app (from secrets)
             set_kv DB_HOST "mysql"
             set_kv DB_PORT "3306"
-            set_kv DB_DATABASE "${PROD_DB_DATABASE}"
-            set_kv DB_USERNAME "${PROD_DB_USERNAME}"
-            set_kv DB_PASSWORD "${PROD_DB_PASSWORD}"
+            set_kv DB_DATABASE "${DB_DATABASE}"
+            set_kv DB_USERNAME "${DB_USERNAME}"
+            set_kv DB_PASSWORD "${DB_PASSWORD}"
 
             # MySQL init (first run only) mapped from DB_*
-            set_kv MYSQL_ROOT_PASSWORD "${PROD_MYSQL_ROOT_PASSWORD}"
-            set_kv MYSQL_DATABASE "${PROD_DB_DATABASE}"
-            set_kv MYSQL_USER "${PROD_DB_USERNAME}"
-            set_kv MYSQL_PASSWORD "${PROD_DB_PASSWORD}"
+            set_kv MYSQL_ROOT_PASSWORD "${MYSQL_ROOT_PASSWORD}"
+            set_kv MYSQL_DATABASE "${DB_DATABASE}"
+            set_kv MYSQL_USER "${DB_USERNAME}"
+            set_kv MYSQL_PASSWORD "${DB_PASSWORD}"
 
             # Optional app metadata (if provided)
             [ -n "${PROD_APP_NAME}" ] && set_kv APP_NAME "${PROD_APP_NAME}"
