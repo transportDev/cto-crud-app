@@ -103,15 +103,15 @@ jobs:
           set -eo pipefail
           cd "$PROD_PATH"
           if [ ! -f docker-compose.override.yml ]; then
-            cat > docker-compose.override.yml <<'YAML'
-            services:
-              nginx:
-                ports:
-                  - "80:80"
-              phpmyadmin:
-                ports:
-                  - "8081:80"
-            YAML
+            cat > docker-compose.override.yml <<'EOF'
+          services:
+            nginx:
+              ports:
+                - "80:80"
+            phpmyadmin:
+              ports:
+                - "8081:80"
+          EOF
           fi
 
       - name: (Optional) Open firewall ports 80 and 8081
