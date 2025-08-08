@@ -1,4 +1,4 @@
-name: Deploy Laravel to VPS
+name: Deploy (self-hosted)
 
 on:
   push:
@@ -7,20 +7,16 @@ on:
 
 jobs:
   deploy:
-    name: CI/CD to VPS
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
+    # Secrets you actually use with the runner (no SSH needed)
     env:
-      PROD_HOST: ${{ secrets.PROD_HOST }}
-      PROD_USER: ${{ secrets.PROD_USER }}
-      PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
-      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
-      PROD_PATH: ${{ secrets.PROD_PATH }}
-      GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+      PROD_PATH: ${{ secrets.PROD_PATH }} # absolute path on the server (e.g., /home/snort/docker/cto-crud-app)
       DB_DATABASE: ${{ secrets.DB_DATABASE }}
       DB_USERNAME: ${{ secrets.DB_USERNAME }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+      # Optional (non-sensitive)
       PROD_APP_NAME: ${{ secrets.PROD_APP_NAME }}
       PROD_APP_URL: ${{ secrets.PROD_APP_URL }}
 
@@ -28,134 +24,125 @@ jobs:
       - name: Validate required secrets
         run: |
           missing=0
-          for v in PROD_HOST PROD_USER PROD_SSH_KEY PROD_PATH GIT_TOKEN DB_DATABASE DB_USERNAME DB_PASSWORD MYSQL_ROOT_PASSWORD; do
+          for v in PROD_PATH DB_DATABASE DB_USERNAME DB_PASSWORD MYSQL_ROOT_PASSWORD; do
             if [ -z "${!v}" ]; then echo "::error::Missing secret: $v"; missing=1; fi
           done
+          case "$PROD_PATH" in /*) ;; *) echo "::error::PROD_PATH must be an absolute path (e.g., /home/user/app)"; missing=1;; esac
           if [ "$missing" -ne 0 ]; then exit 1; fi
 
-      - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ env.PROD_HOST }}
-          username: ${{ env.PROD_USER }}
-          key: ${{ env.PROD_SSH_KEY }}
-          # If you use a custom SSH port, uncomment:
-          # port: ${{ env.PROD_SSH_PORT }}
-          envs: PROD_PATH,GIT_TOKEN,DB_DATABASE,DB_USERNAME,DB_PASSWORD,MYSQL_ROOT_PASSWORD,PROD_APP_NAME,PROD_APP_URL
-          script: |
-            set -eo pipefail
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-            REPO="https://${GIT_TOKEN}@github.com/${{ github.repository }}.git"
-            BRANCH="main"
-            DIR="${PROD_PATH}"
+      - name: Ensure Docker Compose plugin (user-space)
+        run: |
+          set -eo pipefail
+          # Pick docker or sudo docker depending on permission
+          if docker ps >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="sudo docker"; fi
+          echo "DOCKER=$DOCKER" >> $GITHUB_ENV
 
-            if [ -z "$DIR" ]; then echo "PROD_PATH is empty (set the secret)"; exit 1; fi
-            case "$DIR" in /*) ;; *) echo "PROD_PATH must be an absolute path (e.g., /home/user/app)"; exit 1;; esac
+          # Install compose plugin into ~/.docker if missing (no sudo)
+          if ! $DOCKER compose version >/dev/null 2>&1; then
+            mkdir -p ~/.docker/cli-plugins
+            curl -sSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+              -o ~/.docker/cli-plugins/docker-compose
+            chmod +x ~/.docker/cli-plugins/docker-compose
+          fi
 
-            echo "Ensure git..."
-            if ! command -v git >/dev/null 2>&1; then
-              sudo apt-get update && sudo apt-get install -y git
-            fi
+      - name: Sync repo to target dir
+        run: |
+          set -eo pipefail
+          mkdir -p "$PROD_PATH"
+          # Use rsync if available, otherwise tar fallback (no delete)
+          if command -v rsync >/dev/null 2>&1; then
+            rsync -rlgoDzvc --delete --exclude-from=.deployignore ./ "$PROD_PATH"/
+          else
+            echo "rsync not found; using tar fallback (no --delete). Consider installing rsync for cleaner syncs."
+            tar -cf - --exclude-vcs -X .deployignore . | tar -C "$PROD_PATH" -xf -
+          fi
 
-            echo "Ensure Docker..."
-            if ! command -v docker >/dev/null 2>&1; then
-              curl -fsSL https://get.docker.com | sh
-              sudo usermod -aG docker $USER || true
-            fi
-            # Decide whether we need sudo for docker
-            if docker ps >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="sudo docker"; fi
+      - name: Write/Update Compose .env
+        run: |
+          set -eo pipefail
+          cd "$PROD_PATH"
+          touch .env
+          sed -i 's/\r$//' .env || true
 
-            echo "Ensure Docker Compose plugin..."
-            if ! $DOCKER compose version >/dev/null 2>&1; then
-              mkdir -p ~/.docker/cli-plugins
-              curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
-                -o ~/.docker/cli-plugins/docker-compose
-              chmod +x ~/.docker/cli-plugins/docker-compose
-            fi
-
-            echo "Clone or update repo at $DIR..."
-            mkdir -p "$DIR"
-            if [ ! -d "$DIR/.git" ]; then
-              git clone --branch "$BRANCH" "$REPO" "$DIR"
+          set_kv() {
+            KEY="$1"; VAL="$2"
+            if grep -Eq "^${KEY}[[:space:]]*[:=]" .env; then
+              sed -i -E "s#^${KEY}[[:space:]]*[:=][[:space:]]*.*#${KEY}=${VAL}#g" .env
             else
-              cd "$DIR"
-              git fetch origin "$BRANCH"
-              git reset --hard "origin/$BRANCH"
+              echo "${KEY}=${VAL}" >> .env
             fi
+          }
 
-            cd "$DIR"
+          # App DB connection for Laravel
+          set_kv DB_HOST "mysql"
+          set_kv DB_PORT "3306"
+          set_kv DB_DATABASE "${DB_DATABASE}"
+          set_kv DB_USERNAME "${DB_USERNAME}"
+          set_kv DB_PASSWORD "${DB_PASSWORD}"
 
-            echo "Create/update Compose .env (preserve APP_NAME/APP_URL if already set)"
-            touch .env
-            sed -i 's/\r$//' .env || true
-            set_kv() {
-              KEY="$1"; VAL="$2"
-              if grep -Eq "^${KEY}[[:space:]]*[:=]" .env; then
-                sed -i -E "s#^${KEY}[[:space:]]*[:=][[:space:]]*.*#${KEY}=${VAL}#g" .env
-              else
-                echo "${KEY}=${VAL}" >> .env
-              fi
-            }
+          # MySQL init (first run only) mapped from DB_* so you maintain one set
+          set_kv MYSQL_ROOT_PASSWORD "${MYSQL_ROOT_PASSWORD}"
+          set_kv MYSQL_DATABASE "${DB_DATABASE}"
+          set_kv MYSQL_USER "${DB_USERNAME}"
+          set_kv MYSQL_PASSWORD "${DB_PASSWORD}"
 
-            # DB for app (from secrets)
-            set_kv DB_HOST "mysql"
-            set_kv DB_PORT "3306"
+          # Optional app metadata (kept if not provided)
+          [ -n "${PROD_APP_NAME}" ] && set_kv APP_NAME "${PROD_APP_NAME}"
+          [ -n "${PROD_APP_URL}" ] && set_kv APP_URL "${PROD_APP_URL}"
+
+          # Host UID/GID for permissions
+          set_kv UID "$(id -u)"
+          set_kv GID "$(id -g)"
+
+      - name: Bring up containers
+        run: |
+          set -eo pipefail
+          cd "$PROD_PATH"
+          $DOCKER compose up -d --build
+
+      - name: Prepare Laravel and deploy
+        run: |
+          set -eo pipefail
+          cd "$PROD_PATH"
+
+          $DOCKER compose exec -T app bash -lc '
+            set -e
+            cd /var/www/html
+            cp -n .env.example .env || true
+            sed -i "s/\r$//" .env || true
+
+            set_kv(){ k="$1"; v="$2"; if grep -Eq "^$k[[:space:]]*[:=]" .env; then sed -i -E "s#^$k[[:space:]]*[:=][[:space:]]*.*#$k=$v#g" .env; else echo "$k=$v" >> .env; fi; }
+
+            # Force production; set optional fields if present
+            set_kv APP_ENV production
+            [ -n "$APP_NAME" ] && set_kv APP_NAME "$APP_NAME"
+            [ -n "$APP_URL" ] && set_kv APP_URL "$APP_URL"
+
+            # DB settings from container env (passed via Compose .env)
+            set_kv DB_CONNECTION "${DB_CONNECTION:-mysql}"
+            set_kv DB_HOST "${DB_HOST:-mysql}"
+            set_kv DB_PORT "${DB_PORT:-3306}"
             set_kv DB_DATABASE "${DB_DATABASE}"
             set_kv DB_USERNAME "${DB_USERNAME}"
             set_kv DB_PASSWORD "${DB_PASSWORD}"
 
-            # MySQL init (first run only) mapped from DB_*
-            set_kv MYSQL_ROOT_PASSWORD "${MYSQL_ROOT_PASSWORD}"
-            set_kv MYSQL_DATABASE "${DB_DATABASE}"
-            set_kv MYSQL_USER "${DB_USERNAME}"
-            set_kv MYSQL_PASSWORD "${DB_PASSWORD}"
+            mkdir -p storage/logs bootstrap/cache
+            chmod -R ug+rwX storage bootstrap/cache || true
+            chown -R www-data:www-data storage bootstrap/cache || true
+            php artisan key:generate --ansi || true
+          '
 
-            # Optional app metadata (if provided)
-            [ -n "${PROD_APP_NAME}" ] && set_kv APP_NAME "${PROD_APP_NAME}"
-            [ -n "${PROD_APP_URL}" ] && set_kv APP_URL "${PROD_APP_URL}"
-
-            # Host UID/GID for permissions
-            set_kv UID "$(id -u)"
-            set_kv GID "$(id -g)"
-
-            echo "Start/rebuild containers..."
-            $DOCKER compose up -d --build
-
-            echo "Prepare Laravel .env and key..."
-            $DOCKER compose exec -T app bash -lc '
-              set -e
-              cd /var/www/html
-              cp -n .env.example .env || true
-              sed -i "s/\r$//" .env || true
-
-              set_kv(){ k="$1"; v="$2"; if grep -Eq "^$k[[:space:]]*[:=]" .env; then sed -i -E "s#^$k[[:space:]]*[:=][[:space:]]*.*#$k=$v#g" .env; else echo "$k=$v" >> .env; fi; }
-
-              set_kv APP_ENV production
-              [ -n "$APP_NAME" ] && set_kv APP_NAME "$APP_NAME"
-              [ -n "$APP_URL" ] && set_kv APP_URL "$APP_URL"
-
-              set_kv DB_CONNECTION "${DB_CONNECTION:-mysql}"
-              set_kv DB_HOST "${DB_HOST:-mysql}"
-              set_kv DB_PORT "${DB_PORT:-3306}"
-              set_kv DB_DATABASE "${DB_DATABASE}"
-              set_kv DB_USERNAME "${DB_USERNAME}"
-              set_kv DB_PASSWORD "${DB_PASSWORD}"
-
-              mkdir -p storage/logs bootstrap/cache
-              chmod -R ug+rwX storage bootstrap/cache || true
-              chown -R www-data:www-data storage bootstrap/cache || true
-              php artisan key:generate --ansi || true
-            '
-
-            echo "Maintenance on, install deps, migrate, cache..."
-            $DOCKER compose exec -T app php artisan down --render=errors::503 || true
-            $DOCKER compose exec -T app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
-            $DOCKER compose exec -T app php artisan migrate --force
-            $DOCKER compose exec -T app php artisan config:clear || true
-            $DOCKER compose exec -T app php artisan cache:clear || true
-            $DOCKER compose exec -T app php artisan route:clear || true
-            $DOCKER compose exec -T app php artisan view:clear || true
-            $DOCKER compose exec -T app php artisan config:cache || true
-            $DOCKER compose exec -T app php artisan route:cache || true
-            $DOCKER compose exec -T app php artisan view:cache || true
-            $DOCKER compose exec -T app php artisan up || true
+          $DOCKER compose exec -T app php artisan down --render=errors::503 || true
+          $DOCKER compose exec -T app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
+          $DOCKER compose exec -T app php artisan migrate --force
+          $DOCKER compose exec -T app php artisan config:clear || true
+          $DOCKER compose exec -T app php artisan cache:clear || true
+          $DOCKER compose exec -T app php artisan route:clear || true
+          $DOCKER compose exec -T app php artisan view:clear || true
+          $DOCKER compose exec -T app php artisan config:cache || true
+          $DOCKER compose exec -T app php artisan route:cache || true
+          $DOCKER compose exec -T app php artisan view:cache || true
+          $DOCKER compose exec -T app php artisan up || true
