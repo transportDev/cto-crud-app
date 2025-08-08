@@ -1,6 +1,6 @@
 FROM php:8.2-fpm
 
-# System deps for common Laravel/Filament needs
+# System deps for Laravel/Filament
 RUN apt-get update && apt-get install -y \
     git curl zip unzip \
     libpng-dev libjpeg62-turbo-dev libfreetype6-dev \
@@ -24,8 +24,5 @@ RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
 
 WORKDIR /var/www/html
 
-# Entrypoint to bootstrap the app
-COPY docker/php/init.sh /usr/local/bin/init.sh
-RUN chmod +x /usr/local/bin/init.sh
-
-ENTRYPOINT ["/usr/local/bin/init.sh"]
+# Default command
+CMD ["php-fpm", "-F"]

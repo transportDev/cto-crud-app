@@ -4,18 +4,21 @@ services:
       context: .
       dockerfile: docker/php/Dockerfile
     container_name: laravel_app
+    restart: unless-stopped
     volumes:
       - ./laravel_app:/var/www/html
     environment:
-      DB_CONNECTION: mysql
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_DATABASE: laravel_db
-      DB_USERNAME: laravel
-      DB_PASSWORD: secret
+      DB_CONNECTION: ${DB_CONNECTION:-mysql}
+      DB_HOST: ${DB_HOST:-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_DATABASE: ${DB_DATABASE:-laravel_db}
+      DB_USERNAME: ${DB_USERNAME:-laravel}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      # Optional (not required, but available if you want to use them)
+      APP_NAME: ${APP_NAME:-CTO CRUD}
+      APP_URL: ${APP_URL:-http://localhost:8000}
       USER_ID: ${UID:-1000}
       GROUP_ID: ${GID:-1000}
-      LARAVEL_VERSION: ${LARAVEL_VERSION:-12.*}
     depends_on:
       mysql:
         condition: service_healthy
@@ -25,6 +28,7 @@ services:
   nginx:
     image: nginx:1.25-alpine
     container_name: laravel_nginx
+    restart: unless-stopped
     ports:
       - "8000:80"
     volumes:
@@ -37,19 +41,30 @@ services:
       - laravel
 
   mysql:
-    image: mysql:8
+    image: mysql:8.4
     container_name: laravel_mysql
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: laravel_db
-      MYSQL_USER: laravel
-      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      # Map from DB_* so you only maintain one set
+      MYSQL_DATABASE: ${DB_DATABASE:-laravel_db}
+      MYSQL_USER: ${DB_USERNAME:-laravel}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
     ports:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-p${MYSQL_ROOT_PASSWORD:-root}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -59,13 +74,13 @@ services:
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
     container_name: laravel_phpmyadmin
-    restart: always
+    restart: unless-stopped
     ports:
       - "8001:80"
     environment:
       PMA_HOST: mysql
       PMA_PORT: 3306
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
     depends_on:
       mysql:
         condition: service_healthy

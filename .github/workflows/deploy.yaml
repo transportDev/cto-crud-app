@@ -1,0 +1,123 @@
+name: Deploy to Prod
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync repo to server (rsync over SSH)
+        uses: easingthemes/ssh-deploy@v5.1.0
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_KEY }}
+          REMOTE_USER: ${{ secrets.PROD_USER }}
+          REMOTE_HOST: ${{ secrets.PROD_HOST }}
+          # If your SSH port is not 22, add:
+          # REMOTE_PORT: ${{ secrets.PROD_SSH_PORT }}
+          SOURCE: "./"
+          TARGET: ${{ secrets.PROD_PATH }}
+          ARGS: "-rlgoDzvc --delete --exclude-from=.deployignore"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          # If your SSH port is not 22, add:
+          # port: ${{ secrets.PROD_SSH_PORT }}
+          script: |
+            set -eo pipefail
+            cd "${{ secrets.PROD_PATH }}"
+
+            # Create or update Compose .env (preserve APP_NAME/APP_URL if already set)
+            touch .env
+            sed -i 's/\r$//' .env || true
+
+            set_kv() {
+              KEY="$1"; VAL="$2"
+              if grep -Eq "^${KEY}[[:space:]]*[:=]" .env; then
+                sed -i -E "s#^${KEY}[[:space:]]*[:=][[:space:]]*.*#${KEY}=${VAL}#g" .env
+              else
+                echo "${KEY}=${VAL}" >> .env
+              fi
+            }
+
+            # DB for app (from GitHub Secrets)
+            set_kv DB_HOST "mysql"
+            set_kv DB_PORT "3306"
+            set_kv DB_DATABASE "${{ secrets.PROD_DB_DATABASE }}"
+            set_kv DB_USERNAME "${{ secrets.PROD_DB_USERNAME }}"
+            set_kv DB_PASSWORD "${{ secrets.PROD_DB_PASSWORD }}"
+
+            # MySQL init (first run only) mapped from DB_*
+            set_kv MYSQL_ROOT_PASSWORD "${{ secrets.PROD_MYSQL_ROOT_PASSWORD }}"
+            set_kv MYSQL_DATABASE "${{ secrets.PROD_DB_DATABASE }}"
+            set_kv MYSQL_USER "${{ secrets.PROD_DB_USERNAME }}"
+            set_kv MYSQL_PASSWORD "${{ secrets.PROD_DB_PASSWORD }}"
+
+            # UID/GID for file permissions
+            set_kv UID "$(id -u)"
+            set_kv GID "$(id -g)"
+
+            # Start/rebuild containers
+            if command -v "docker compose" >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
+            $DC up -d --build
+
+            # Prepare Laravel for production and sync env into laravel_app/.env
+            $DC exec -T app bash -lc '
+              set -e
+              cd /var/www/html
+              cp -n .env.example .env || true
+              sed -i "s/\r$//" .env || true
+
+              set_kv(){ k="$1"; v="$2"; if grep -Eq "^$k[[:space:]]*[:=]" .env; then sed -i -E "s#^$k[[:space:]]*[:=][[:space:]]*.*#$k=$v#g" .env; else echo "$k=$v" >> .env; fi; }
+
+              # Force production and keep APP_NAME/URL from container env if present
+              set_kv APP_ENV production
+              set_kv APP_NAME "${APP_NAME:-CTO CRUD}"
+              set_kv APP_URL "${APP_URL:-http://localhost:8000}"
+
+              # DB from container env (passed via Compose .env)
+              set_kv DB_CONNECTION "${DB_CONNECTION:-mysql}"
+              set_kv DB_HOST "${DB_HOST:-mysql}"
+              set_kv DB_PORT "${DB_PORT:-3306}"
+              set_kv DB_DATABASE "${DB_DATABASE}"
+              set_kv DB_USERNAME "${DB_USERNAME}"
+              set_kv DB_PASSWORD "${DB_PASSWORD}"
+
+              mkdir -p storage/logs bootstrap/cache
+              chmod -R ug+rwX storage bootstrap/cache || true
+              chown -R www-data:www-data storage bootstrap/cache || true
+              php artisan key:generate --ansi || true
+            '
+
+            # Maintenance during deploy
+            $DC exec -T app php artisan down --render=errors::503 || true
+
+            # Install deps & migrate
+            $DC exec -T app composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
+            $DC exec -T app php artisan migrate --force
+
+            # Clear & cache
+            $DC exec -T app php artisan config:clear || true
+            $DC exec -T app php artisan cache:clear || true
+            $DC exec -T app php artisan route:clear || true
+            $DC exec -T app php artisan view:clear || true
+            $DC exec -T app php artisan config:cache || true
+            $DC exec -T app php artisan route:cache || true
+            $DC exec -T app php artisan view:cache || true
+
+            # Back online
+            $DC exec -T app php artisan up || true

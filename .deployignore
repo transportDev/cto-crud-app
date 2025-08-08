@@ -1,0 +1,11 @@
+.env
+.git/
+.github/
+mysql_data/
+
+laravel_app/vendor/
+laravel_app/node_modules/
+laravel_app/.env
+laravel_app/storage/
+
+*.md
