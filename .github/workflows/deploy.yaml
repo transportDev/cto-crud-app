@@ -65,10 +65,12 @@ jobs:
 
           set_kv() {
             KEY="$1"; VAL="$2"
+            # Escape special characters in the value
+            VAL=$(printf '%s\n' "$VAL" | sed 's/[[\.*^$()+?{|]/\\&/g')
             if grep -Eq "^${KEY}[[:space:]]*[:=]" .env; then
-              sed -i -E "s#^${KEY}[[:space:]]*[:=][[:space:]]*.*#${KEY}=${VAL}#g" .env
+              sed -i -E "s#^${KEY}[[:space:]]*[:=][[:space:]]*.*#${KEY}=\"${VAL}\"#g" .env
             else
-              echo "${KEY}=${VAL}" >> .env
+              echo "${KEY}=\"${VAL}\"" >> .env
             fi
           }
 
@@ -140,9 +142,22 @@ jobs:
             set -e
             cd /var/www/html
             cp -n .env.example .env || true
+            
+            # Clean the .env file of any problematic content
+            sed -i "/^\[.*\]/d" .env || true
             sed -i "s/\r$//" .env || true
+            sed -i "/^[[:space:]]*$/d" .env || true
 
-            set_kv(){ k="$1"; v="$2"; if grep -Eq "^$k[[:space:]]*[:=]" .env; then sed -i -E "s#^$k[[:space:]]*[:=][[:space:]]*.*#$k=$v#g" .env; else echo "$k=$v" >> .env; fi; }
+            set_kv(){ 
+              k="$1"; v="$2"; 
+              # Escape special characters and quote the value
+              v=$(printf "%s\n" "$v" | sed "s/[[\.*^$()+?{|]/\\\\&/g")
+              if grep -Eq "^$k[[:space:]]*[:=]" .env; then 
+                sed -i -E "s#^$k[[:space:]]*[:=][[:space:]]*.*#$k=\"$v\"#g" .env; 
+              else 
+                echo "$k=\"$v\"" >> .env; 
+              fi; 
+            }
 
             set_kv APP_ENV production
             [ -n "$APP_NAME" ] && set_kv APP_NAME "$APP_NAME"
