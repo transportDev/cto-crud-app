@@ -50,7 +50,11 @@ jobs:
           set -eo pipefail
           mkdir -p "$PROD_PATH"
           if command -v rsync >/dev/null 2>&1; then
-            rsync -rlgoDzvc --delete --exclude-from=.deployignore ./ "$PROD_PATH"/
+            # Use rsync without trying to change ownership/group, ignore permission errors
+            rsync -rlptDzvc --delete --exclude-from=.deployignore --no-owner --no-group ./ "$PROD_PATH"/ || {
+              echo "rsync failed with ownership issues, retrying with basic sync..."
+              rsync -rltDzvc --delete --exclude-from=.deployignore ./ "$PROD_PATH"/
+            }
           else
             echo "rsync not found; using tar fallback (no --delete)."
             tar -cf - --exclude-vcs -X .deployignore . | tar -C "$PROD_PATH" -xf -
