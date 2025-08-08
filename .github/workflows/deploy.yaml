@@ -50,15 +50,23 @@ jobs:
           set -eo pipefail
           mkdir -p "$PROD_PATH"
           if command -v rsync >/dev/null 2>&1; then
-            # Use rsync without trying to change ownership/group, ignore permission errors
-            rsync -rlptDzvc --delete --exclude-from=.deployignore --no-owner --no-group ./ "$PROD_PATH"/ || {
-              echo "rsync failed with ownership issues, retrying with basic sync..."
-              rsync -rltDzvc --delete --exclude-from=.deployignore ./ "$PROD_PATH"/
+            # Try rsync with minimal options first
+            rsync -rlzvc --delete --exclude-from=.deployignore ./ "$PROD_PATH"/ 2>/dev/null || {
+              echo "Standard rsync failed, trying without timestamp preservation..."
+              rsync -rlzvc --delete --exclude-from=.deployignore --no-times ./ "$PROD_PATH"/ 2>/dev/null || {
+                echo "rsync still failing, using basic copy without --delete..."
+                rsync -rlzvc --exclude-from=.deployignore ./ "$PROD_PATH"/
+              }
             }
           else
-            echo "rsync not found; using tar fallback (no --delete)."
+            echo "rsync not found; using tar fallback."
             tar -cf - --exclude-vcs -X .deployignore . | tar -C "$PROD_PATH" -xf -
           fi
+
+          # Ensure proper permissions for Laravel
+          find "$PROD_PATH" -type f -name "*.php" -exec chmod 644 {} \; 2>/dev/null || true
+          find "$PROD_PATH" -type d -exec chmod 755 {} \; 2>/dev/null || true
+          chmod -R 775 "$PROD_PATH"/storage "$PROD_PATH"/bootstrap/cache 2>/dev/null || true
 
       - name: Write/Update Compose .env (includes proxy)
         run: |
