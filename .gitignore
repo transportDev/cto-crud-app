@@ -1,0 +1,2 @@
+.env
+docker/php/entrypoint.sh

@@ -1,0 +1,30 @@
+#!/usr/bin/env sh
+# wait-for host:port with optional timeout (default 60s)
+# Usage: wait-for host:port [timeout_seconds]
+
+set -eu
+
+TARGET="${1:-}"
+TIMEOUT="${2:-60}"
+
+if [ -z "$TARGET" ]; then
+  echo "Usage: $0 host:port [timeout_seconds]"
+  exit 1
+fi
+
+HOST="$(echo "$TARGET" | cut -d: -f1)"
+PORT="$(echo "$TARGET" | cut -d: -f2)"
+
+echo "Waiting for $HOST:$PORT (timeout ${TIMEOUT}s)..."
+
+i=0
+until nc -z "$HOST" "$PORT" >/dev/null 2>&1; do
+  i=$((i+1))
+  if [ "$i" -ge "$TIMEOUT" ]; then
+    echo "Timeout after ${TIMEOUT}s waiting for $HOST:$PORT"
+    exit 1
+  fi
+  sleep 1
+done
+
+echo "$HOST:$PORT is available"

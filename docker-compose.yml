@@ -1,0 +1,93 @@
+name: cto-crud-app
+
+services:
+  app:
+    build:
+      context: ./docker/php
+    container_name: app
+    env_file:
+      - .env
+    volumes:
+      - ./:/var/www/html
+      - composer_cache:/tmp/composer-cache
+    networks:
+      - appnet
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run as root during bootstrap to manage UID/GID and permissions; entrypoint drops to unprivileged user.
+    user: "root"
+
+  web:
+    image: nginx:1.27-alpine
+    container_name: web
+    depends_on:
+      - app
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - appnet
+
+  db:
+    build:
+      context: ./docker/mysql
+    container_name: db
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-app}
+      MYSQL_USER: ${DB_USERNAME:-app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsecret}
+      MYSQL_ROOT_HOST: ${MYSQL_ROOT_HOST:-%}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - appnet
+
+  node:
+    image: node:20-alpine
+    container_name: node
+    working_dir: /var/www/html/laravel
+    depends_on:
+      - app
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    volumes:
+      - ./:/var/www/html
+      - npm_cache:/root/.npm
+    command: >
+      sh -lc "while [ ! -f package.json ]; do echo 'Waiting for Laravel app to be created...'; sleep 2; done;
+      npm ci || npm install;
+      npm run dev -- --host 0.0.0.0 --port 5173"
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    name: appnet
+    driver: bridge
+
+volumes:
+  mysql_data:
+  composer_cache:
+  npm_cache:
