@@ -11,14 +11,21 @@ WORKDIR /app
 COPY laravel/composer.json laravel/composer.lock ./
 RUN composer validate --no-ansi --no-interaction --no-scripts
 
-# Install prod deps first for caching; dev deps are never installed in final image
+# 🔧 FIX: Install with dev deps first for proper dependency resolution
+RUN composer install --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts --no-plugins
+
+# Copy full app for autoload generation
+COPY laravel/ ./
+
+# Now optimize for production (remove dev deps)
 RUN composer install --no-dev --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts --no-plugins --optimize-autoloader
 
 # Node build stage for frontend assets (Vite/Tailwind)
 FROM node:${NODE_VERSION}-alpine AS node_build
 WORKDIR /app
 COPY laravel/package.json laravel/package-lock.json ./
-RUN npm ci --omit=dev=false
+# 🔧 FIX: Use correct npm syntax
+RUN npm ci --include=dev
 COPY laravel/ ./
 # Build production assets (adjust if your build command differs)
 RUN npm run build
@@ -27,11 +34,28 @@ RUN npm run build
 FROM php:${PHP_VERSION}-fpm-alpine AS app
 WORKDIR /var/www/html
 
-# System deps
+# 🔧 FIX: Enhanced system deps with missing packages
 RUN set -eux; \
     apk add --no-cache bash curl libpng libjpeg-turbo libwebp libzip icu-libs \
-        oniguruma shadow tzdata; \
-    apk add --no-cache --virtual .build-deps $PHPIZE_DEPS icu-dev libzip-dev oniguruma-dev libpng-dev libjpeg-turbo-dev libwebp-dev; \
+        oniguruma shadow tzdata mysql-client; \
+    apk add --no-cache --virtual .build-deps \
+        $PHPIZE_DEPS \
+        autoconf \
+        dpkg-dev \
+        dpkg \
+        file \
+        g++ \
+        gcc \
+        libc-dev \
+        make \
+        pkgconf \
+        re2c \
+        icu-dev \
+        libzip-dev \
+        oniguruma-dev \
+        libpng-dev \
+        libjpeg-turbo-dev \
+        libwebp-dev; \
     docker-php-ext-configure gd --with-jpeg --with-webp; \
     docker-php-ext-install -j$(nproc) pdo_mysql gd zip intl opcache bcmath; \
     pecl install redis && docker-php-ext-enable redis; \
@@ -46,7 +70,7 @@ COPY docker/prod/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 COPY laravel/ ./
 # Copy vendor from composer stage
 COPY --from=composer_base /app/vendor ./vendor
-# Copy built assets from node stage
+# Copy built assets from node stage  
 COPY --from=node_build /app/public/build ./public/build
 
 # Ensure storage and bootstrap cache are writable
