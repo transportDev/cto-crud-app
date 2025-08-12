@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build_test:
+  build_and_test:
     name: Build and Test
     runs-on: ubuntu-latest
     defaults:
@@ -59,8 +59,8 @@ jobs:
           extensions: mbstring, intl, pdo_mysql, zip, bcmath
           coverage: none
 
-      - name: Install Composer deps (no dev)
-        run: composer install --no-dev --prefer-dist --no-ansi --no-interaction --no-progress --optimize-autoloader
+      - name: Install Composer deps (with dev)
+        run: composer install --prefer-dist --no-ansi --no-interaction --no-progress
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -82,13 +82,30 @@ jobs:
           DB_DATABASE: ":memory:"
         run: php artisan test --colors=never
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: laravel-build
+          path: laravel
+
   package_push:
     name: Package and Push Images
-    needs: [build_test]
+    needs: build_and_test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: laravel-build
+          path: laravel
+
+      - name: Install Composer deps (no dev, optimize)
+        run: |
+          cd laravel
+          composer install --no-dev --prefer-dist --no-ansi --no-interaction --no-progress --optimize-autoloader
 
       - name: Prepare repo/env names
         id: prep
