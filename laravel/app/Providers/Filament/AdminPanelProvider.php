@@ -31,7 +31,8 @@ class AdminPanelProvider extends PanelProvider
             ->brandName('Admin Panel')
             ->authGuard('web')
             ->colors([
-                'primary' => Color::Indigo,
+                // Telkomsel-inspired bold red
+                'primary' => Color::hex('#E60000'),
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')

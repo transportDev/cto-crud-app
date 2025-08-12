@@ -53,19 +53,8 @@ class User extends Authenticatable implements FilamentUser
      */
     public function canAccessPanel(Panel $panel): bool
     {
-        // Option 1: Allow all users
-        return true;
-        
-        // Option 2: Only allow users with specific roles (since you're using Spatie Permission)
-        // return $this->hasRole('admin') || $this->hasRole('super-admin');
-        
-        // Option 3: Only allow users with specific permissions
-        // return $this->hasPermissionTo('access admin panel');
-        
-        // Option 4: Check by panel ID if you have multiple panels
-        // if ($panel->getId() === 'admin') {
-        //     return $this->hasRole('admin');
-        // }
-        // return false;
+        // Restrict Filament admin panel to users with the "admin" role.
+        // Uses Spatie Permission via HasRoles trait.
+        return $this->hasRole('admin');
     }
 }
