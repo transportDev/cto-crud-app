@@ -141,12 +141,14 @@ jobs:
     runs-on: [self-hosted, prod, docker]
     environment:
       name: production
-      url: http://${{ secrets.PRODUCTION_HOST }}
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
     if: ${{ (github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.deploy == 'true') }}
     steps:
+      - name: Show deploy URL
+        run: echo "Deploying to http://${{ secrets.PRODUCTION_HOST }}"
+
       - name: Checkout
         uses: actions/checkout@v4
 
