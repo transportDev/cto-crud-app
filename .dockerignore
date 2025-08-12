@@ -1,0 +1,36 @@
+# Global ignores to keep Docker build context small and secure
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Node/Yarn/NPM
+**/node_modules
+**/npm-debug.log*
+**/yarn-error.log*
+
+# Composer
+laravel/vendor
+composer.phar
+
+# Laravel caches and local env
+**/.env
+**/.env.*
+**/.DS_Store
+**/storage/*.key
+**/storage/logs/*
+**/storage/framework/cache/*
+**/storage/framework/sessions/*
+**/storage/framework/views/*
+**/bootstrap/cache/*.php
+
+# IDE/editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db

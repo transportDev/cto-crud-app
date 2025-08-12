@@ -1,0 +1,5 @@
+# Ignore environment files created on the runner or locally
+*.env
+!example.env
+!.gitkeep
+production.env

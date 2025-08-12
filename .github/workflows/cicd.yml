@@ -1,0 +1,265 @@
+name: CI-CD
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after build/test
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      image_tag:
+        description: Optional image tag to deploy (short SHA) for rollback; defaults to current SHA
+        required: false
+        type: string
+      seed_admin:
+        description: Run AdminUserSeeder (first deploy only)
+        required: false
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  group: cto-crud-app-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./laravel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ runner.os }}-${{ hashFiles('laravel/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, intl, pdo_mysql, zip, bcmath
+          coverage: none
+
+      - name: Install Composer deps (no dev)
+        run: composer install --no-dev --prefer-dist --no-ansi --no-interaction --no-progress --optimize-autoloader
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "laravel/package-lock.json"
+
+      - name: Build Frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run PHPUnit
+        env:
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          APP_ENV: testing
+          DB_CONNECTION: sqlite
+          DB_DATABASE: ":memory:"
+        run: php artisan test --colors=never
+
+  package_push:
+    name: Package and Push Images
+    needs: [build_test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare repo/env names
+        id: prep
+        run: |
+          echo "REPO_LC=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push PHP-FPM image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/prod/php.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ env.REPO_LC }}-php:${{ env.SHA }}
+            ghcr.io/${{ env.REPO_LC }}-php:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Nginx image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/prod/nginx.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ env.REPO_LC }}-nginx:${{ env.SHA }}
+            ghcr.io/${{ env.REPO_LC }}-nginx:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Production
+    needs: [package_push]
+    runs-on: [self-hosted, linux, prod, docker]
+    environment:
+      name: production
+      url: http://${{ secrets.PRODUCTION_HOST }}
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+    if: ${{ (github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && inputs.deploy == 'true') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tags and color
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+          echo "REPO_LC=${REPO_LC}" >> $GITHUB_ENV
+          if [ -n "${{ inputs.image_tag || '' }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            TAG="${GITHUB_SHA::7}"
+          fi
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+          STATE_DIR="/opt/cto-crud/state"
+          ACTIVE_FILE="${STATE_DIR}/active_color"
+          mkdir -p "${STATE_DIR}"
+          ACTIVE="blue"
+          if [ -f "${ACTIVE_FILE}" ]; then ACTIVE="$(cat "${ACTIVE_FILE}" || echo blue)"; fi
+          if [ "${ACTIVE}" = "blue" ]; then NEW="green"; else NEW="blue"; fi
+          echo "ACTIVE_COLOR=${ACTIVE}" >> $GITHUB_ENV
+          echo "NEW_COLOR=${NEW}" >> $GITHUB_ENV
+
+      - name: Ensure infra (network/volumes) and DB up
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create cto_net || true
+          docker volume create cto_db_data || true
+          docker volume create cto_app_storage || true
+          mkdir -p env
+          cat > env/production.env <<'ENVV'
+          APP_NAME=CTO CRUD App
+          APP_ENV=production
+          APP_DEBUG=false
+          APP_URL=http://${{ secrets.PRODUCTION_HOST }}
+          APP_KEY=${{ secrets.APP_KEY }}
+
+          LOG_CHANNEL=stack
+          LOG_LEVEL=info
+
+          DB_CONNECTION=mysql
+          DB_HOST=db
+          DB_PORT=3306
+          DB_DATABASE=${{ secrets.DB_DATABASE }}
+          DB_USERNAME=${{ secrets.DB_USERNAME }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+
+          CACHE_DRIVER=file
+          QUEUE_CONNECTION=database
+          SESSION_DRIVER=file
+          ENVV
+          docker compose -p cto_db --env-file env/production.env -f docker-compose.db.yml up -d db
+          for i in $(seq 1 60); do
+            if docker inspect --format='{{json .State.Health.Status}}' cto_db-db-1 2>/dev/null | grep -q healthy; then
+              echo "DB healthy"; break; fi; sleep 2; done
+
+      - name: Preflight up NEW color on localhost staging port
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          export IMAGE_PHP="ghcr.io/${REPO_LC}-php:${TAG}"
+          export IMAGE_NGINX="ghcr.io/${REPO_LC}-nginx:${TAG}"
+          if [ "${NEW_COLOR}" = "blue" ]; then STAGE_PORT=8081; PROJ="cto_blue"; else STAGE_PORT=8082; PROJ="cto_green"; fi
+          export WEB_PORT_BIND="127.0.0.1:${STAGE_PORT}"
+          echo "Bringing up ${NEW_COLOR} on ${WEB_PORT_BIND}"
+          docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml up -d app
+          docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml up -d web
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${STAGE_PORT}/healthz" >/dev/null; then
+              echo "New stack healthy"; break; fi; sleep 2
+            if [ "$i" -eq 60 ]; then echo "Health check failed for new stack" >&2; exit 1; fi
+          done
+
+      - name: Run database migrations (and optional seed) on NEW color
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${NEW_COLOR}" = "blue" ]; then PROJ="cto_blue"; else PROJ="cto_green"; fi
+          docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc 'DO_MIGRATIONS=true php artisan migrate --force'
+          if [ "${{ inputs.seed_admin || 'false' }}" = "true" ]; then
+            docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc 'SEED_ADMIN=true php artisan db:seed --class=AdminUserSeeder --no-interaction || true'
+          fi
+
+      - name: Switch traffic to NEW color (minimal blip)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${ACTIVE_COLOR}" = "blue" ]; then OLD_PROJ="cto_blue"; else OLD_PROJ="cto_green"; fi
+          if [ "${NEW_COLOR}" = "blue" ]; then NEW_PROJ="cto_blue"; else NEW_PROJ="cto_green"; fi
+          if docker ps --format '{{.Names}}' | grep -q "${OLD_PROJ}-web-"; then
+            echo "Stopping old web (${OLD_PROJ})"
+            docker compose -p "${OLD_PROJ}" --env-file env/production.env -f docker-compose.prod.yml stop web || true
+          fi
+          export IMAGE_PHP="ghcr.io/${REPO_LC}-php:${TAG}"
+          export IMAGE_NGINX="ghcr.io/${REPO_LC}-nginx:${TAG}"
+          export WEB_PORT_BIND="0.0.0.0:80"
+          docker compose -p "${NEW_PROJ}" --env-file env/production.env -f docker-compose.prod.yml up -d web
+          docker compose -p "${NEW_PROJ}" --env-file env/production.env -f docker-compose.prod.yml up -d queue scheduler
+          if [ "${ACTIVE_COLOR}" != "${NEW_COLOR}" ]; then
+            docker compose -p "${OLD_PROJ}" --env-file env/production.env -f docker-compose.prod.yml stop queue scheduler app || true
+          fi
+          echo "${NEW_COLOR}" | sudo tee /opt/cto-crud/state/active_color >/dev/null
+
+      - name: Post-deploy verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS "http://${{ secrets.PRODUCTION_HOST }}/healthz" >/dev/null; then echo "Production healthy"; exit 0; fi; sleep 2; done
+          echo "Production health check failed" >&2; exit 1

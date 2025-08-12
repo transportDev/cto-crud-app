@@ -1,0 +1,90 @@
+name: cto-crud-app
+services:
+  app:
+    image: ${IMAGE_PHP}
+    env_file: ./env/production.env
+    environment:
+      DO_MIGRATIONS: "false"
+      SEED_ADMIN: "false"
+    depends_on:
+      webdep:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "php", "-v"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: always
+    networks:
+      - cto_net
+    volumes:
+      - app_storage:/var/www/html/storage
+
+  web:
+    image: ${IMAGE_NGINX}
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT_BIND:-0.0.0.0:80}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+    networks:
+      - cto_net
+
+  queue:
+    image: ${IMAGE_PHP}
+    env_file: ./env/production.env
+    command:
+      [
+        "sh",
+        "-lc",
+        "php artisan queue:work --sleep=1 --tries=3 --max-time=3600",
+      ]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: always
+    networks:
+      - cto_net
+    volumes:
+      - app_storage:/var/www/html/storage
+
+  scheduler:
+    image: ${IMAGE_PHP}
+    env_file: ./env/production.env
+    command:
+      [
+        "sh",
+        "-lc",
+        "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done",
+      ]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: always
+    networks:
+      - cto_net
+    volumes:
+      - app_storage:/var/www/html/storage
+
+  # Dummy dependency (no-op) to satisfy depends_on schema, since DB runs in separate compose project
+  webdep:
+    image: alpine:3.19
+    command: ["sh", "-lc", "sleep 0"]
+    deploy:
+      replicas: 0
+
+volumes:
+  app_storage:
+    external: true
+    name: cto_app_storage
+
+networks:
+  cto_net:
+    external: true
+    name: cto_net
