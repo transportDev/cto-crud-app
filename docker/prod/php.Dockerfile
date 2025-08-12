@@ -4,37 +4,11 @@
 ARG PHP_VERSION=8.2
 ARG NODE_VERSION=20
 
-FROM composer:2 AS composer_base
-WORKDIR /app
-
-# App base: only copy composer manifests for caching
-COPY laravel/composer.json laravel/composer.lock ./
-RUN composer validate --no-ansi --no-interaction --no-scripts
-
-# 🔧 FIX: Install with dev deps first for proper dependency resolution
-RUN composer install --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts --no-plugins
-
-# Copy full app for autoload generation
-COPY laravel/ ./
-
-# Now optimize for production (remove dev deps)
-RUN composer install --no-dev --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts --no-plugins --optimize-autoloader
-
-# Node build stage for frontend assets (Vite/Tailwind)
-FROM node:${NODE_VERSION}-alpine AS node_build
-WORKDIR /app
-COPY laravel/package.json laravel/package-lock.json ./
-# 🔧 FIX: Use correct npm syntax
-RUN npm ci --include=dev
-COPY laravel/ ./
-# Build production assets (adjust if your build command differs)
-RUN npm run build
-
-# Final app build: PHP-FPM alpine with required extensions
-FROM php:${PHP_VERSION}-fpm-alpine AS app
+# 🔧 FIX: Base PHP stage FIRST with all extensions
+FROM php:${PHP_VERSION}-fpm-alpine AS php_base
 WORKDIR /var/www/html
 
-# 🔧 FIX: Enhanced system deps with missing packages
+# Install ALL system deps and PHP extensions first
 RUN set -eux; \
     apk add --no-cache bash curl libpng libjpeg-turbo libwebp libzip icu-libs \
         oniguruma shadow tzdata mysql-client; \
@@ -62,15 +36,47 @@ RUN set -eux; \
     apk del .build-deps; \
     usermod -u 1000 www-data || true && groupmod -g 1000 www-data || true
 
-# Opcache for production
+# Install Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# 🔧 FIX: Composer stage now inherits from php_base (with extensions)
+FROM php_base AS composer_base
+WORKDIR /app
+
+# Copy composer files
+COPY laravel/composer.json laravel/composer.lock ./
+RUN composer validate --no-ansi --no-interaction --no-scripts
+
+# Install with dev deps first for proper dependency resolution
+RUN composer install --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts --no-plugins
+
+# Copy full app for autoload generation
+COPY laravel/ ./
+
+# Now optimize for production (remove dev deps)
+RUN composer install --no-dev --prefer-dist --no-ansi --no-interaction --no-progress --no-scripts --no-plugins --optimize-autoloader
+
+# Node build stage for frontend assets (unchanged)
+FROM node:${NODE_VERSION}-alpine AS node_build
+WORKDIR /app
+COPY laravel/package.json laravel/package-lock.json ./
+RUN npm ci --include=dev
+COPY laravel/ ./
+RUN npm run build
+
+# Final app stage
+FROM php_base AS app
+WORKDIR /var/www/html
+
+# Copy PHP configuration
 COPY docker/prod/php.ini /usr/local/etc/php/php.ini
 COPY docker/prod/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
 # Copy app code
 COPY laravel/ ./
-# Copy vendor from composer stage
+# Copy optimized vendor from composer stage
 COPY --from=composer_base /app/vendor ./vendor
-# Copy built assets from node stage  
+# Copy built assets from node stage
 COPY --from=node_build /app/public/build ./public/build
 
 # Ensure storage and bootstrap cache are writable
@@ -81,11 +87,10 @@ RUN set -eux; \
     find storage -type f -exec chmod 664 {} \; ; \
     chmod -R 775 bootstrap/cache
 
-# Healthcheck script
+# Copy scripts
 COPY docker/prod/healthcheck.sh /usr/local/bin/healthcheck.sh
 RUN chmod +x /usr/local/bin/healthcheck.sh
 
-# Entrypoint for runtime tweaks and optional migrations
 COPY docker/prod/php-entrypoint.sh /usr/local/bin/php-entrypoint.sh
 RUN chmod +x /usr/local/bin/php-entrypoint.sh
 
