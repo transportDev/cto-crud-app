@@ -6,8 +6,8 @@
                 <div class="flex items-center gap-3">
                     <x-heroicon-o-list-bullet class="h-6 w-6 text-red-600" />
                     <div>
-                        <h2 class="text-lg font-semibold">Dynamic CRUD</h2>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">Manage any table. Choose a table to view, add, edit, or delete records.</p>
+                        
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Kelola tabel apapun. Pilih tabel untuk melihat, menambah, mengedit, atau menghapus data.</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-2">

@@ -1,4 +1,4 @@
 <x-filament::page>
-    <h1>Welcome to your Admin Dashboard</h1>
-    <p>Customize this page as you like.</p>
+    <h1>CTO CRUD</h1>
+    <p>Selamat datang di dashboard CTO CRUD. Silakan gunakan menu di samping untuk mengelola data Anda.</p>
 </x-filament::page>

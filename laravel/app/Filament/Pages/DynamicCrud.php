@@ -38,11 +38,11 @@ class DynamicCrud extends Page implements HasTable, HasForms
     use Forms\Concerns\InteractsWithForms;
 
     protected static ?string $navigationIcon = 'heroicon-o-list-bullet';
-    protected static ?string $navigationGroup = 'Development';
-    protected static ?string $navigationLabel = 'Dynamic CRUD';
+    protected static ?string $navigationGroup = 'Management';
+    protected static ?string $navigationLabel = 'CTO CRUD';
     protected static ?int $navigationSort = 2;
     protected static string $view = 'filament.pages.dynamic-crud';
-    protected static ?string $title = 'Dynamic CRUD';
+    protected static ?string $title = 'CTO CRUD';
 
     // Header selector form
     public ?array $config = [];
@@ -86,7 +86,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return $form
             ->schema([
                 FormSelect::make('table')
-                    ->label('Select table')
+                    ->label('Pilih tabel')
                     ->searchable()
                     ->options(function () {
                         $tables = app(TableBuilderService::class)->listUserTables();
@@ -98,7 +98,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         // Force table to refresh its query/columns
                         $this->resetTable();
                     })
-                    ->helperText('Choose a database table to manage. Newly created tables appear automatically.'),
+                    ->helperText('Pilih tabel database yang ingin dikelola. Tabel baru akan muncul secara otomatis.'),
             ])
             ->statePath('config');
     }
@@ -112,8 +112,10 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->headerActions($this->buildHeaderActions())
             ->actions($this->buildRowActions())
             ->bulkActions($this->buildBulkActions())
-            ->emptyStateHeading('Select a table to begin')
-            ->emptyStateDescription('Use the selector above to pick a table. You can also create new tables via the Table Builder.')
+            ->emptyStateHeading($this->selectedTable ? 'Tidak ada data ditemukan' : 'Pilih tabel untuk memulai')
+            ->emptyStateDescription($this->selectedTable
+                ? 'Belum ada data pada tabel ini. Tambahkan data baru untuk mulai mengelola.'
+                : 'Gunakan pemilih di atas untuk memilih tabel. Anda juga dapat membuat tabel baru melalui Table Builder.')
             ->striped()
             ->deferLoading()
             ->paginated([10, 25, 50, 100]);
@@ -424,6 +426,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
         foreach (array_keys($data) as $key) {
             if ($this->isSystemColumn($key) || ($isEdit && $this->isPrimaryKey($key))) {
                 unset($data[$key]);
+            }
+        }
+
+        // Autofill created_at and updated_at if the table has those columns and it's a create action
+        if (!$isEdit && $this->selectedTable) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn($this->selectedTable, 'created_at')) {
+                $data['created_at'] = now();
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn($this->selectedTable, 'updated_at')) {
+                $data['updated_at'] = now();
             }
         }
     }

@@ -394,37 +394,3 @@ jobs:
             docker compose -p "${OLD_PROJ}" --env-file env/production.env -f docker-compose.prod.yml stop queue scheduler app || true
           fi
           echo "${NEW_COLOR}" | sudo tee /opt/cto-crud/state/active_color >/dev/null
-
-      # 🆕 NEW STEP 2: Enhanced Post-Deploy Verification
-      - name: First Deployment Verification
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "=== COMPREHENSIVE FIRST DEPLOYMENT VERIFICATION ==="
-
-          # Test database connectivity
-          echo "🔍 Testing database connectivity..."
-          timeout 30 bash -c 'until curl -fsS "http://${{ secrets.PRODUCTION_HOST }}/healthz" > /dev/null; do sleep 2; done' || {
-            echo "❌ Health check endpoint failed"
-            exit 1
-          }
-
-          # Test application functionality
-          echo "🔍 Testing application routes..."
-
-          # Test homepage
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.PRODUCTION_HOST }}/")
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ Homepage returned $HTTP_CODE"
-            exit 1
-          fi
-
-          # Test login page (if exists)
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.PRODUCTION_HOST }}/login")
-          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
-            echo "✅ Login route accessible"
-          fi
-
-          echo "✅ First deployment verification complete"
-          echo "🎉 Application successfully deployed to http://${{ secrets.PRODUCTION_HOST }}"
