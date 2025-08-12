@@ -38,6 +38,21 @@ jobs:
   build_and_test:
     name: Build and Test
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: testing
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     defaults:
       run:
         working-directory: ./laravel
@@ -74,12 +89,26 @@ jobs:
           npm ci
           npm run build
 
+      - name: Wait for MySQL
+        run: |
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -u root -proot --silent; then
+              echo "MySQL is up"; break
+            fi
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
+
       - name: Run PHPUnit
         env:
           APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
           APP_ENV: testing
-          DB_CONNECTION: sqlite
-          DB_DATABASE: ":memory:"
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: testing
+          DB_USERNAME: testuser
+          DB_PASSWORD: testpass
         run: php artisan test --colors=never
 
       - name: Upload build artifacts
@@ -143,7 +172,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/prod/nginx.Dockerfile
+          file: docker/prod/php.Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
@@ -168,6 +197,39 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+
+      # 🆕 NEW STEP 1: Initialize First Deployment Infrastructure
+      - name: Initialize First Deployment Infrastructure
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== FIRST DEPLOYMENT SETUP ==="
+
+          # Create required directories with proper permissions
+          sudo mkdir -p /opt/cto-crud/state
+          sudo chown -R $USER:$USER /opt/cto-crud
+
+          # Initialize state files for first deployment
+          STATE_DIR="/opt/cto-crud/state"
+          ACTIVE_FILE="${STATE_DIR}/active_color"
+
+          if [ ! -f "${ACTIVE_FILE}" ]; then
+            echo "blue" > "${ACTIVE_FILE}"
+            echo "🎯 First deployment detected - initialized with blue environment"
+          fi
+
+          # Create backup directory
+          mkdir -p /opt/cto-crud/backups
+
+          # Verify Docker daemon is running
+          docker info > /dev/null || (echo "❌ Docker daemon not running" && exit 1)
+
+          # Create required networks and volumes
+          docker network create cto_net 2>/dev/null || echo "Network cto_net already exists"
+          docker volume create cto_db_data 2>/dev/null || echo "Volume cto_db_data already exists"
+          docker volume create cto_app_storage 2>/dev/null || echo "Volume cto_app_storage already exists"
+
+          echo "✅ Infrastructure initialization complete"
 
       - name: Compute image tags and color
         id: prep
@@ -245,15 +307,73 @@ jobs:
             if [ "$i" -eq 60 ]; then echo "Health check failed for new stack" >&2; exit 1; fi
           done
 
-      - name: Run database migrations (and optional seed) on NEW color
+      # 🔄 REPLACED STEP: Enhanced Database Initialization
+      - name: Initialize Database and Run Migrations (First Deploy Safe)
         shell: bash
         run: |
           set -euo pipefail
+
           if [ "${NEW_COLOR}" = "blue" ]; then PROJ="cto_blue"; else PROJ="cto_green"; fi
-          docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc 'DO_MIGRATIONS=true php artisan migrate --force'
-          if [ "${{ inputs.seed_admin || 'false' }}" = "true" ]; then
-            docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc 'SEED_ADMIN=true php artisan db:seed --class=AdminUserSeeder --no-interaction || true'
+
+          echo "=== DATABASE INITIALIZATION ==="
+
+          # Check if this is truly a first deployment
+          DB_EXISTS=$(docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc '
+            php artisan tinker --execute="
+              try {
+                \DB::connection()->getPdo();
+                \DB::table(\"migrations\")->count();
+                echo \"EXISTS\";
+              } catch (\Exception $e) {
+                echo \"NEW\";
+              }
+            "' 2>/dev/null || echo "NEW")
+
+          if [ "$DB_EXISTS" = "NEW" ]; then
+            echo "🆕 First deployment detected - initializing fresh database"
+            
+            # Create database schema and run all migrations
+            docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc '
+              php artisan migrate:install --force
+              php artisan migrate --force --step
+              php artisan db:seed --class=DatabaseSeeder --force
+            '
+            
+            # Always seed admin on first deploy regardless of input
+            echo "👤 Creating initial admin user"
+            docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc '
+              php artisan db:seed --class=AdminUserSeeder --force || echo "⚠️  Admin seeder not found or failed"
+            '
+            
+          else
+            echo "🔄 Existing database detected - running migrations only"
+            
+            # Create backup before migrations
+            BACKUP_FILE="/opt/cto-crud/backups/pre_deploy_$(date +%Y%m%d_%H%M%S).sql"
+            docker compose -p cto_db --env-file env/production.env -f docker-compose.db.yml exec -T db sh -c '
+              mysqldump -u root -p${MYSQL_ROOT_PASSWORD} ${MYSQL_DATABASE}
+            ' > "$BACKUP_FILE"
+            echo "💾 Database backup created: $BACKUP_FILE"
+            
+            # Run migrations
+            docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc '
+              php artisan migrate --force
+            '
+            
+            # Optional admin seeding based on input
+            if [ "${{ inputs.seed_admin || 'false' }}" = "true" ]; then
+              docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc '
+                php artisan db:seed --class=AdminUserSeeder --force || true
+              '
+            fi
           fi
+
+          # Verify database state
+          echo "🔍 Verifying database state..."
+          docker compose -p "${PROJ}" --env-file env/production.env -f docker-compose.prod.yml exec -T app sh -lc '
+            php artisan migrate:status
+            echo "Migration verification complete"
+          '
 
       - name: Switch traffic to NEW color (minimal blip)
         shell: bash
@@ -275,10 +395,36 @@ jobs:
           fi
           echo "${NEW_COLOR}" | sudo tee /opt/cto-crud/state/active_color >/dev/null
 
-      - name: Post-deploy verification
+      # 🆕 NEW STEP 2: Enhanced Post-Deploy Verification
+      - name: First Deployment Verification
         shell: bash
         run: |
           set -euo pipefail
-          for i in $(seq 1 30); do
-            if curl -fsS "http://${{ secrets.PRODUCTION_HOST }}/healthz" >/dev/null; then echo "Production healthy"; exit 0; fi; sleep 2; done
-          echo "Production health check failed" >&2; exit 1
+
+          echo "=== COMPREHENSIVE FIRST DEPLOYMENT VERIFICATION ==="
+
+          # Test database connectivity
+          echo "🔍 Testing database connectivity..."
+          timeout 30 bash -c 'until curl -fsS "http://${{ secrets.PRODUCTION_HOST }}/healthz" > /dev/null; do sleep 2; done' || {
+            echo "❌ Health check endpoint failed"
+            exit 1
+          }
+
+          # Test application functionality
+          echo "🔍 Testing application routes..."
+
+          # Test homepage
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.PRODUCTION_HOST }}/")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Homepage returned $HTTP_CODE"
+            exit 1
+          fi
+
+          # Test login page (if exists)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.PRODUCTION_HOST }}/login")
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "302" ]; then
+            echo "✅ Login route accessible"
+          fi
+
+          echo "✅ First deployment verification complete"
+          echo "🎉 Application successfully deployed to http://${{ secrets.PRODUCTION_HOST }}"
