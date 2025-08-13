@@ -27,7 +27,15 @@ class TableBuilder extends Page
     public ?array $data = [];
     public ?string $preview = null;
     public ?array $tablePreview = null;
+    public bool $previewLoading = false;
+    public bool $autoRefresh = true;
+    public int $currentStep = 0; // Track current wizard step
 
+    protected $listeners = [
+        'previewTable' => 'previewTable',
+        'handleRefreshPreview' => 'handleRefreshPreview',
+        'wizardStepChanged' => 'handleWizardStepChanged'
+    ];
 
     public static function getNavigationLabel(): string
     {
@@ -44,10 +52,10 @@ class TableBuilder extends Page
         if (!self::canAccess()) {
             abort(403);
         }
-        
+
         // Set locale to Indonesian for this page
         app()->setLocale('id');
-        
+
         $this->form->fill([
             'timestamps' => true,
             'soft_deletes' => false,
@@ -57,7 +65,6 @@ class TableBuilder extends Page
             ],
         ]);
     }
-
 
     public static function canAccess(): bool
     {
@@ -130,7 +137,7 @@ class TableBuilder extends Page
                                 ->collapsible() // <-- ADDED: Makes items collapsible
                                 ->collapsed()   // <-- ADDED: New items are collapsed by default
                                 ->addActionLabel(__('table-builder.add_column')) // <-- ADDED: Custom button text
-                                ->itemLabel(fn (array $state): ?string => ($state['name'] ?? __('table-builder.steps.columns')) . ' : ' . ($state['type'] ?? '...')) // <-- ADDED: Dynamic title
+                                ->itemLabel(fn(array $state): ?string => ($state['name'] ?? __('table-builder.steps.columns')) . ' : ' . ($state['type'] ?? '...')) // <-- ADDED: Dynamic title
                                 ->schema([
                                     // The inner schema remains the same, wrapped in a Section for better visuals
                                     Section::make()->schema([
@@ -158,21 +165,36 @@ class TableBuilder extends Page
                                                 ->live()
                                                 ->options([
                                                     // strings
-                                                    'string' => 'string', 'char' => 'char', 'text' => 'text', 'mediumText' => 'mediumText', 'longText' => 'longText',
+                                                    'string' => 'string',
+                                                    'char' => 'char',
+                                                    'text' => 'text',
+                                                    'mediumText' => 'mediumText',
+                                                    'longText' => 'longText',
                                                     // integers
-                                                    'integer' => 'integer', 'tinyInteger' => 'tinyInteger', 'smallInteger' => 'smallInteger', 'mediumInteger' => 'mediumInteger', 'bigInteger' => 'bigInteger',
+                                                    'integer' => 'integer',
+                                                    'tinyInteger' => 'tinyInteger',
+                                                    'smallInteger' => 'smallInteger',
+                                                    'mediumInteger' => 'mediumInteger',
+                                                    'bigInteger' => 'bigInteger',
                                                     // numeric
-                                                    'decimal' => 'decimal', 'float' => 'float', 'double' => 'double',
+                                                    'decimal' => 'decimal',
+                                                    'float' => 'float',
+                                                    'double' => 'double',
                                                     // boolean
                                                     'boolean' => 'boolean',
                                                     // date/time
-                                                    'date' => 'date', 'time' => 'time', 'datetime' => 'datetime', 'timestamp' => 'timestamp',
+                                                    'date' => 'date',
+                                                    'time' => 'time',
+                                                    'datetime' => 'datetime',
+                                                    'timestamp' => 'timestamp',
                                                     // ids
-                                                    'uuid' => 'uuid', 'ulid' => 'ulid',
+                                                    'uuid' => 'uuid',
+                                                    'ulid' => 'ulid',
                                                     // json
                                                     'json' => 'json',
                                                     // enum/set
-                                                    'enum' => 'enum', 'set' => 'set',
+                                                    'enum' => 'enum',
+                                                    'set' => 'set',
                                                     // foreign
                                                     'foreignId' => 'foreignId',
                                                 ])
@@ -180,14 +202,14 @@ class TableBuilder extends Page
                                                 ->columnSpan(3),
                                         ]),
                                         Grid::make(6)->schema([
-                                            Forms\Components\TextInput::make('length')->numeric()->minValue(1)->visible(fn ($get) => in_array($get('type'), $stringTypes, true))->helperText(__('table-builder.length_helper'))->columnSpan(2),
-                                            Forms\Components\TextInput::make('precision')->numeric()->minValue(1)->visible(fn ($get) => in_array($get('type'), $numericTypes, true))->helperText(__('table-builder.precision_helper'))->columnSpan(2),
-                                            Forms\Components\TextInput::make('scale')->numeric()->minValue(0)->visible(fn ($get) => in_array($get('type'), $numericTypes, true))->helperText(__('table-builder.scale_helper'))->columnSpan(2),
+                                            Forms\Components\TextInput::make('length')->numeric()->minValue(1)->visible(fn($get) => in_array($get('type'), $stringTypes, true))->helperText(__('table-builder.length_helper'))->columnSpan(2),
+                                            Forms\Components\TextInput::make('precision')->numeric()->minValue(1)->visible(fn($get) => in_array($get('type'), $numericTypes, true))->helperText(__('table-builder.precision_helper'))->columnSpan(2),
+                                            Forms\Components\TextInput::make('scale')->numeric()->minValue(0)->visible(fn($get) => in_array($get('type'), $numericTypes, true))->helperText(__('table-builder.scale_helper'))->columnSpan(2),
                                         ]),
                                         Grid::make(6)->schema([
-                                            Forms\Components\Toggle::make('unsigned')->label(__('table-builder.unsigned'))->visible(fn ($get) => in_array($get('type'), $integerTypes, true))->inline(false),
-                                            Forms\Components\Toggle::make('auto_increment')->label(__('table-builder.auto_increment'))->visible(fn ($get) => in_array($get('type'), ['integer','bigInteger'], true))->inline(false),
-                                            Forms\Components\Toggle::make('primary')->label(__('table-builder.primary_key'))->visible(fn ($get) => in_array($get('type'), array_merge($integerTypes, ['uuid','ulid']), true))->inline(false),
+                                            Forms\Components\Toggle::make('unsigned')->label(__('table-builder.unsigned'))->visible(fn($get) => in_array($get('type'), $integerTypes, true))->inline(false),
+                                            Forms\Components\Toggle::make('auto_increment')->label(__('table-builder.auto_increment'))->visible(fn($get) => in_array($get('type'), ['integer', 'bigInteger'], true))->inline(false),
+                                            Forms\Components\Toggle::make('primary')->label(__('table-builder.primary_key'))->visible(fn($get) => in_array($get('type'), array_merge($integerTypes, ['uuid', 'ulid']), true))->inline(false),
                                             Forms\Components\Toggle::make('nullable')->label(__('table-builder.nullable'))->inline(false),
                                             Forms\Components\Toggle::make('unique')->label(__('table-builder.unique'))->inline(false),
                                             Forms\Components\Select::make('index')->label(__('table-builder.index'))->options([
@@ -197,27 +219,27 @@ class TableBuilder extends Page
                                             ])->default(null),
                                         ]),
                                         Grid::make(6)->schema([
-                                            Forms\Components\TextInput::make('default')->label(__('table-builder.default_value'))->visible(fn ($get) => !in_array($get('type'), ['boolean'], true))->columnSpan(4),
-                                            Forms\Components\Toggle::make('default_bool')->label(__('table-builder.default_boolean'))->visible(fn ($get) => $get('type') === 'boolean')->inline(false)->columnSpan(2),
+                                            Forms\Components\TextInput::make('default')->label(__('table-builder.default_value'))->visible(fn($get) => !in_array($get('type'), ['boolean'], true))->columnSpan(4),
+                                            Forms\Components\Toggle::make('default_bool')->label(__('table-builder.default_boolean'))->visible(fn($get) => $get('type') === 'boolean')->inline(false)->columnSpan(2),
                                         ]),
                                         Grid::make(6)->schema([
-                                            Forms\Components\TagsInput::make('enum_options')->label(__('table-builder.enum_options'))->placeholder(__('table-builder.enum_options_placeholder'))->visible(fn ($get) => in_array($get('type'), ['enum','set'], true))->helperText(__('table-builder.enum_options_helper'))->columnSpan(6),
+                                            Forms\Components\TagsInput::make('enum_options')->label(__('table-builder.enum_options'))->placeholder(__('table-builder.enum_options_placeholder'))->visible(fn($get) => in_array($get('type'), ['enum', 'set'], true))->helperText(__('table-builder.enum_options_helper'))->columnSpan(6),
                                         ]),
                                         Grid::make(6)->schema([
-                                            Forms\Components\Select::make('references_table')->label(__('table-builder.references_table'))->searchable()->options(fn () => app(TableBuilderService::class)->listUserTables())->visible(fn ($get) => $get('type') === 'foreignId')->columnSpan(3),
-                                            Forms\Components\TextInput::make('references_column')->label(__('table-builder.references_column'))->default('id')->visible(fn ($get) => $get('type') === 'foreignId')->columnSpan(3),
+                                            Forms\Components\Select::make('references_table')->label(__('table-builder.references_table'))->searchable()->options(fn() => app(TableBuilderService::class)->listUserTables())->visible(fn($get) => $get('type') === 'foreignId')->columnSpan(3),
+                                            Forms\Components\TextInput::make('references_column')->label(__('table-builder.references_column'))->default('id')->visible(fn($get) => $get('type') === 'foreignId')->columnSpan(3),
                                             Forms\Components\Select::make('on_update')->label(__('table-builder.on_update'))->options([
                                                 null => __('table-builder.foreign_actions.no_action'),
                                                 'cascade' => __('table-builder.foreign_actions.cascade'),
                                                 'restrict' => __('table-builder.foreign_actions.restrict'),
                                                 'set_null' => __('table-builder.foreign_actions.set_null')
-                                            ])->visible(fn ($get) => $get('type') === 'foreignId')->columnSpan(3),
+                                            ])->visible(fn($get) => $get('type') === 'foreignId')->columnSpan(3),
                                             Forms\Components\Select::make('on_delete')->label(__('table-builder.on_delete'))->options([
                                                 null => __('table-builder.foreign_actions.no_action'),
                                                 'cascade' => __('table-builder.foreign_actions.cascade'),
                                                 'restrict' => __('table-builder.foreign_actions.restrict'),
                                                 'set_null' => __('table-builder.foreign_actions.set_null')
-                                            ])->visible(fn ($get) => $get('type') === 'foreignId')->columnSpan(3),
+                                            ])->visible(fn($get) => $get('type') === 'foreignId')->columnSpan(3),
                                         ]),
                                         Forms\Components\TextInput::make('comment')->label(__('table-builder.comment'))->maxLength(255),
                                     ])->columns(1),
@@ -227,19 +249,14 @@ class TableBuilder extends Page
                                     foreach ($state as $i => $col) {
                                         if (isset($col['name']) && in_array($col['name'], $names, true)) {
                                             $state[$i]['name'] = $col['name'] . '_' . ($i + 1);
-                                        } elseif(isset($col['name'])) {
+                                        } elseif (isset($col['name'])) {
                                             $names[] = $col['name'];
                                         }
                                     }
                                     $set('columns', $state);
                                 }),
                         ]),
-                    Wizard\Step::make(__('table-builder.steps.indexes_rules'))
-                        ->icon('heroicon-o-shield-check')
-                        ->schema([
-                            Forms\Components\View::make('filament.pages.partials.indexes-hint')
-                                ->columnSpanFull(),
-                        ]),
+
                     Wizard\Step::make(__('table-builder.steps.preview_confirm'))
                         ->icon('heroicon-o-eye')
                         ->schema([
@@ -250,23 +267,16 @@ class TableBuilder extends Page
                                             Forms\Components\View::make('filament.pages.partials.table-preview')
                                                 ->viewData([
                                                     'tablePreview' => $this->tablePreview,
-                                                    'loading' => false,
+                                                    'loading' => $this->previewLoading,
                                                 ])
                                                 ->columnSpanFull(),
                                         ]),
-                                    Forms\Components\Tabs\Tab::make(__('table-builder.migration_code'))
-                                        ->schema([
-                                            Forms\Components\Textarea::make('preview')
-                                                ->label(__('table-builder.migration_code'))
-                                                ->rows(12)
-                                                ->readOnly()
-                                                ->helperText(__('table-builder.preview_helper'))
-                                                ->dehydrated(false),
-                                        ]),
+
                                 ])
                                 ->columnSpanFull(),
                         ]),
                 ])
+                    ->id('table-builder-wizard')
                     ->skippable()
                     ->persistStepInQueryString()
                     ->columnSpanFull(),
@@ -274,230 +284,367 @@ class TableBuilder extends Page
             ->statePath('data');
     }
 
-    public function previewTable(TableBuilderService $service): void
-{
-    try {
-        $state = $this->form->getState();
-        
-        // Debug: Log the state we're working with
-        Log::info('Preview Table State', [
-            'state' => $state,
-            'columns' => $state['columns'] ?? 'NO_COLUMNS'
-        ]);
-        
-        // Check for duplicate column names
-        $names = array_map(fn ($c) => $c['name'] ?? '', $state['columns'] ?? []);
-        $names = array_filter($names); // Remove empty names
-        
-        if (count($names) !== count(array_unique($names))) {
-            Notification::make()
-                ->danger()
-                ->title(__('table-builder.notifications.duplicate_columns'))
-                ->send();
+    public function handleWizardStepChanged($step): void
+    {
+        $this->currentStep = $step;
+
+        // Auto-generate preview when reaching the preview step (step 4, 0-indexed as 3)
+        if ($step === 3) {
+            $this->dispatch('browser-event', [
+                'name' => 'set-preview-step',
+                'data' => ['isPreviewStep' => true]
+            ]);
+
+            // Small delay to ensure the view is rendered
+            $this->dispatch('delayed-preview');
+        } else {
+            $this->dispatch('browser-event', [
+                'name' => 'set-preview-step',
+                'data' => ['isPreviewStep' => false]
+            ]);
+        }
+    }
+
+    public function previewTable(bool $silent = true): void
+    {
+        if ($this->previewLoading) {
             return;
         }
-        
-        // Generate migration code preview
-        $result = $service->preview($state);
-        $this->data['preview'] = $result['preview'] ?? null;
-        
-        // Generate visual table preview
-        $this->tablePreview = $this->generateTablePreview($state);
-        
-        // Check if preview generation failed
-        if (isset($this->tablePreview['error']) && $this->tablePreview['error']) {
-            Notification::make()
-                ->warning()
-                ->title(__('table-builder.notifications.preview_warning'))
-                ->body($this->tablePreview['message'] ?? 'Unknown error')
-                ->send();
-        } else {
-            Notification::make()
-                ->title(__('table-builder.notifications.preview_generated'))
-                ->body(__('table-builder.notifications.preview_generated_body'))
-                ->success()
-                ->send();
+
+        $this->previewLoading = true;
+
+        try {
+            $service = app(TableBuilderService::class);
+
+            // Get current form state without validation first
+            $state = $this->form->getRawState();
+
+            // Guard: if not ready, quietly exit (no notifications)
+            if (blank($state['table']) || empty($state['columns'])) {
+                $this->tablePreview = null;
+                $this->data['preview'] = null;
+                return;
+            }
+
+            // Clean up the state
+            $state = array_filter($state, fn($value) => $value !== null && $value !== '');
+
+            // Check duplicates
+            $names = array_filter(array_map(fn($c) => $c['name'] ?? '', $state['columns'] ?? []));
+            if (count($names) !== count(array_unique($names))) {
+                if (!$silent) {
+                    Notification::make()
+                        ->danger()
+                        ->title(__('table-builder.notifications.duplicate_columns'))
+                        ->send();
+                }
+                return;
+            }
+
+            // Generate migration preview
+            try {
+                $result = $service->preview($state);
+                $this->data['preview'] = $result['preview'] ?? 'No preview generated';
+            } catch (\Throwable $e) {
+                Log::error('Service Preview Error', ['error' => $e->getMessage()]);
+                $this->data['preview'] = 'Error generating migration preview: ' . $e->getMessage();
+            }
+
+            // Visual table preview
+            $this->tablePreview = $this->generateTablePreview($state);
+
+            if (!$silent) {
+                Notification::make()
+                    ->title(__('table-builder.notifications.preview_generated'))
+                    ->body(__('table-builder.notifications.preview_generated_body'))
+                    ->success()
+                    ->send();
+            }
+        } catch (\Throwable $e) {
+            Log::error('Preview Table Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'state' => $this->form->getRawState(),
+            ]);
+
+            if (!$silent) {
+                Notification::make()
+                    ->danger()
+                    ->title('Preview Error')
+                    ->body('Failed to generate preview: ' . $e->getMessage())
+                    ->send();
+            }
+
+            $this->tablePreview = [
+                'error' => true,
+                'message' => 'Preview generation failed',
+                'helper' => $e->getMessage(),
+            ];
+            $this->data['preview'] = 'Error: ' . $e->getMessage();
+        } finally {
+            $this->previewLoading = false;
+            $this->dispatch('preview-completed');
         }
-        
-    } catch (\Exception $e) {
-        Log::error('Preview Table Error', [
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ]);
-        
-        Notification::make()
-            ->danger()
-            ->title('Preview Error')
-            ->body('An error occurred while generating the preview: ' . $e->getMessage())
-            ->send();
-            
-        // Set error state
-        $this->tablePreview = [
-            'error' => true,
-            'message' => 'Preview generation failed',
-            'helper' => 'Check the logs for more details.'
-        ];
     }
-}
 
     public function createTable(TableBuilderService $service): void
     {
-        $state = $this->form->getState();
-        $names = array_map(fn ($c) => $c['name'] ?? '', $state['columns'] ?? []);
-        if (count($names) !== count(array_unique($names))) {
-            Notification::make()->danger()->title(__('table-builder.notifications.duplicate_columns'))->send();
+        // Prevent multiple simultaneous table creation
+        if ($this->previewLoading) {
             return;
         }
-        $service->create($state);
-        Notification::make()
-            ->title(__('table-builder.notifications.table_created'))
-            ->body(__('table-builder.notifications.table_created_body', ['table' => $state['table']]))
-            ->success()
-            ->send();
-        $this->data['preview'] = null;
-        $this->tablePreview = null;
+
+        $this->previewLoading = true;
+
+        try {
+            // Get and validate form state
+            $this->form->validate();
+            $state = $this->form->getState();
+
+            // Check for duplicate column names
+            $names = array_map(fn($c) => $c['name'] ?? '', $state['columns'] ?? []);
+            $names = array_filter($names);
+
+            if (count($names) !== count(array_unique($names))) {
+                Notification::make()
+                    ->danger()
+                    ->title(__('table-builder.notifications.duplicate_columns'))
+                    ->send();
+                return;
+            }
+
+            // Check if table already exists
+            if (Schema::hasTable($state['table'])) {
+                Notification::make()
+                    ->danger()
+                    ->title(__('table-builder.notifications.table_exists'))
+                    ->body(__('table-builder.notifications.table_exists_body', ['table' => $state['table']]))
+                    ->send();
+                return;
+            }
+
+            Log::info('Creating table', [
+                'table' => $state['table'],
+                'columns_count' => count($state['columns'] ?? [])
+            ]);
+
+            // Create the table using the service
+            $result = $service->create($state);
+
+            // Log the creation
+            Log::info('Table created successfully', [
+                'table' => $state['table'],
+                'result' => $result
+            ]);
+
+            // Show success notification
+            Notification::make()
+                ->title(__('table-builder.notifications.table_created'))
+                ->body(__('table-builder.notifications.table_created_body', ['table' => $state['table']]))
+                ->success()
+                ->duration(5000) // Show for 5 seconds
+                ->send();
+
+            // Reset the form and wizard
+            $this->resetWizard();
+        } catch (\Exception $e) {
+            Log::error('Table Creation Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'table' => $state['table'] ?? 'unknown'
+            ]);
+
+            Notification::make()
+                ->danger()
+                ->title(__('table-builder.notifications.table_creation_failed'))
+                ->body($e->getMessage())
+                ->persistent() // Keep notification until dismissed
+                ->send();
+        } finally {
+            $this->previewLoading = false;
+        }
+    }
+
+    /**
+     * Reset the wizard form to step 1 and clear all data
+     */
+    public function resetWizard(): void
+    {
+        try {
+            // Clear all form data
+            $this->data = [];
+            $this->preview = null;
+            $this->tablePreview = null;
+            $this->previewLoading = false;
+            $this->currentStep = 0;
+
+            // Reset form to initial state
+            $this->form->fill([
+                'timestamps' => true,
+                'soft_deletes' => false,
+                'columns' => [
+                    [
+                        'name' => 'id',
+                        'type' => 'bigInteger',
+                        'auto_increment' => true,
+                        'primary' => true,
+                        'unsigned' => true
+                    ],
+                ],
+            ]);
+
+            // Dispatch events to reset the wizard UI
+            $this->dispatch('reset-wizard-to-step-one');
+            $this->dispatch('form-reset-complete');
+
+            Log::info('Wizard form reset successfully');
+        } catch (\Exception $e) {
+            Log::error('Error resetting wizard', [
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     protected function generateTablePreview(array $state): array
-{
-    $columns = $state['columns'] ?? [];
-    
-    // Debug: Add logging to see what we're getting
-    Log::info('Table Preview Debug', [
-        'columns_count' => count($columns),
-        'columns_data' => $columns,
-        'full_state' => $state
-    ]);
-    
-    if (empty($columns)) {
-        return [
-            'error' => true,
-            'message' => __('table-builder.no_columns'),
-            'helper' => __('table-builder.no_columns_helper'),
-        ];
-    }
+    {
+        $columns = $state['columns'] ?? [];
 
-    $headers = [];
-    $sampleRows = [];
+        // Debug: Add logging to see what we're getting
+        Log::info('Table Preview Debug', [
+            'columns_count' => count($columns),
+            'columns_data' => $columns,
+            'full_state' => $state
+        ]);
 
-    // Generate headers with metadata
-    foreach ($columns as $index => $column) {
-        // Ensure we have required fields
-        if (empty($column['name']) || empty($column['type'])) {
-            Log::warning('Column missing required fields', [
-                'index' => $index,
-                'column' => $column
-            ]);
-            continue; // Skip malformed columns
+        if (empty($columns)) {
+            return [
+                'error' => true,
+                'message' => __('table-builder.no_columns'),
+                'helper' => __('table-builder.no_columns_helper'),
+            ];
         }
 
-        $metadata = [];
-        
-        if (!empty($column['primary'])) {
-            $metadata[] = __('table-builder.metadata.primary_key');
-        }
-        if (!empty($column['nullable'])) {
-            $metadata[] = __('table-builder.metadata.nullable');
-        }
-        if (!empty($column['unique'])) {
-            $metadata[] = __('table-builder.metadata.unique');
-        }
-        if (!empty($column['auto_increment'])) {
-            $metadata[] = __('table-builder.metadata.auto_increment');
-        }
-        if (!empty($column['unsigned'])) {
-            $metadata[] = __('table-builder.metadata.unsigned');
-        }
-        if (isset($column['default']) && $column['default'] !== null && $column['default'] !== '') {
-            $metadata[] = __('table-builder.metadata.default') . ': ' . $column['default'];
-        } elseif (isset($column['default_bool']) && $column['default_bool'] !== null) {
-            $defaultValue = $column['default_bool'] ? __('table-builder.sample_data.boolean_true') : __('table-builder.sample_data.boolean_false');
-            $metadata[] = __('table-builder.metadata.default') . ': ' . $defaultValue;
-        }
+        $headers = [];
+        $sampleRows = [];
 
-        $headers[] = [
-            'name' => $column['name'],
-            'type' => $column['type'],
-            'metadata' => $metadata,
-        ];
-    }
-
-    // Check if we have any valid headers
-    if (empty($headers)) {
-        return [
-            'error' => true,
-            'message' => __('table-builder.no_valid_columns'),
-            'helper' => __('table-builder.no_valid_columns_helper'),
-        ];
-    }
-
-    // Generate 5 sample rows
-    for ($i = 1; $i <= 5; $i++) {
-        $row = [];
-        foreach ($columns as $column) {
-            // Skip malformed columns
+        // Generate headers with metadata
+        foreach ($columns as $index => $column) {
+            // Ensure we have required fields
             if (empty($column['name']) || empty($column['type'])) {
-                continue;
+                Log::warning('Column missing required fields', [
+                    'index' => $index,
+                    'column' => $column
+                ]);
+                continue; // Skip malformed columns
             }
-            $row[] = $this->generateSampleValue($column, $i);
+
+            $metadata = [];
+
+            if (!empty($column['primary'])) {
+                $metadata[] = __('table-builder.metadata.primary_key');
+            }
+            if (!empty($column['nullable'])) {
+                $metadata[] = __('table-builder.metadata.nullable');
+            }
+            if (!empty($column['unique'])) {
+                $metadata[] = __('table-builder.metadata.unique');
+            }
+            if (!empty($column['auto_increment'])) {
+                $metadata[] = __('table-builder.metadata.auto_increment');
+            }
+            if (!empty($column['unsigned'])) {
+                $metadata[] = __('table-builder.metadata.unsigned');
+            }
+            if (isset($column['default']) && $column['default'] !== null && $column['default'] !== '') {
+                $metadata[] = __('table-builder.metadata.default') . ': ' . $column['default'];
+            } elseif (isset($column['default_bool']) && $column['default_bool'] !== null) {
+                $defaultValue = $column['default_bool'] ? __('table-builder.sample_data.boolean_true') : __('table-builder.sample_data.boolean_false');
+                $metadata[] = __('table-builder.metadata.default') . ': ' . $defaultValue;
+            }
+
+            $headers[] = [
+                'name' => $column['name'],
+                'type' => $column['type'],
+                'metadata' => $metadata,
+            ];
         }
-        $sampleRows[] = $row;
-    }
 
-    // Add timestamp columns if enabled
-    if (!empty($state['timestamps'])) {
-        $headers[] = [
-            'name' => 'created_at',
-            'type' => 'timestamp',
-            'metadata' => [],
-        ];
-        $headers[] = [
-            'name' => 'updated_at',
-            'type' => 'timestamp',
-            'metadata' => [],
-        ];
-        
-        for ($i = 0; $i < 5; $i++) {
-            $timestamp = now()->subDays($i)->locale('id')->format('d M Y H.i');
-            $sampleRows[$i][] = $timestamp;
-            $sampleRows[$i][] = $timestamp;
+        // Check if we have any valid headers
+        if (empty($headers)) {
+            return [
+                'error' => true,
+                'message' => __('table-builder.no_valid_columns'),
+                'helper' => __('table-builder.no_valid_columns_helper'),
+            ];
         }
-    }
 
-    // Add soft delete column if enabled
-    if (!empty($state['soft_deletes'])) {
-        $headers[] = [
-            'name' => 'deleted_at',
-            'type' => 'timestamp',
-            'metadata' => [__('table-builder.metadata.nullable')],
-        ];
-        
-        for ($i = 0; $i < 5; $i++) {
-            $sampleRows[$i][] = null; // All sample rows are not deleted
+        // Generate 5 sample rows
+        for ($i = 1; $i <= 5; $i++) {
+            $row = [];
+            foreach ($columns as $column) {
+                // Skip malformed columns
+                if (empty($column['name']) || empty($column['type'])) {
+                    continue;
+                }
+                $row[] = $this->generateSampleValue($column, $i);
+            }
+            $sampleRows[] = $row;
         }
+
+        // Add timestamp columns if enabled
+        if (!empty($state['timestamps'])) {
+            $headers[] = [
+                'name' => 'created_at',
+                'type' => 'timestamp',
+                'metadata' => [],
+            ];
+            $headers[] = [
+                'name' => 'updated_at',
+                'type' => 'timestamp',
+                'metadata' => [],
+            ];
+
+            for ($i = 0; $i < 5; $i++) {
+                $timestamp = now()->subDays($i)->locale('id')->format('d M Y H.i');
+                $sampleRows[$i][] = $timestamp;
+                $sampleRows[$i][] = $timestamp;
+            }
+        }
+
+        // Add soft delete column if enabled
+        if (!empty($state['soft_deletes'])) {
+            $headers[] = [
+                'name' => 'deleted_at',
+                'type' => 'timestamp',
+                'metadata' => [__('table-builder.metadata.nullable')],
+            ];
+
+            for ($i = 0; $i < 5; $i++) {
+                $sampleRows[$i][] = null; // All sample rows are not deleted
+            }
+        }
+
+        Log::info('Table Preview Generated Successfully', [
+            'headers_count' => count($headers),
+            'rows_count' => count($sampleRows)
+        ]);
+
+        return [
+            'headers' => $headers,
+            'rows' => $sampleRows,
+            'table_name' => $state['table'] ?? '',
+        ];
     }
-
-    Log::info('Table Preview Generated Successfully', [
-        'headers_count' => count($headers),
-        'rows_count' => count($sampleRows)
-    ]);
-
-    return [
-        'headers' => $headers,
-        'rows' => $sampleRows,
-        'table_name' => $state['table'] ?? '',
-    ];
-}
 
     protected function generateSampleValue(array $column, int $index): string
     {
         $type = $column['type'];
-        
+
         // Handle default values first
         if (isset($column['default']) && $column['default'] !== null && $column['default'] !== '') {
             return $column['default'];
         }
-        
+
         if ($type === 'boolean' && isset($column['default_bool']) && $column['default_bool'] !== null) {
             return $column['default_bool'] ? __('table-builder.sample_data.boolean_true') : __('table-builder.sample_data.boolean_false');
         }
@@ -519,11 +666,66 @@ class TableBuilder extends Page
         };
     }
 
-    // REMOVED: This method is no longer needed as the Blade view provides the action buttons.
-    /*
-    protected function getFormActions(): array
+    public function updatedDataColumns(): void
     {
-        // ...
+        if ($this->currentStep === 3) {
+            $this->previewTable(); // default is silent
+        }
     }
-    */
+
+    protected function isOnPreviewStep(): bool
+    {
+        return $this->currentStep === 3;
+    }
+
+    public function updatedData($property, $value): void
+    {
+        // When columns change and we're on preview step, refresh
+        if (Str::startsWith($property, 'columns') && $this->isOnPreviewStep()) {
+            $this->dispatch('refresh-preview');
+        }
+    }
+
+    public function handleRefreshPreview(): void
+    {
+        $this->previewTable(); // silent
+    }
+    // Add this method to your TableBuilder class for debugging
+    public function debugPreview(): void
+    {
+        Log::info('Debug Preview Called');
+
+        try {
+            $service = app(TableBuilderService::class);
+            Log::info('Service resolved successfully', ['service' => get_class($service)]);
+
+            $state = $this->form->getRawState();
+            Log::info('Form state retrieved', [
+                'table' => $state['table'] ?? 'MISSING',
+                'columns_count' => count($state['columns'] ?? []),
+                'full_state' => $state
+            ]);
+
+            // Test the service
+            $result = $service->preview($state);
+            Log::info('Service preview result', ['result' => $result]);
+
+            Notification::make()
+                ->title('Debug completed')
+                ->body('Check logs for details')
+                ->success()
+                ->send();
+        } catch (\Exception $e) {
+            Log::error('Debug Preview Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            Notification::make()
+                ->danger()
+                ->title('Debug Error')
+                ->body($e->getMessage())
+                ->send();
+        }
+    }
 }

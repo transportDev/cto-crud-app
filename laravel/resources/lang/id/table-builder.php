@@ -92,10 +92,13 @@ return [
     'metadata' => [
         'primary_key' => 'Kunci Utama',
         'nullable' => 'Dapat Kosong',
-        'default' => 'Bawaan',
+        'default' => 'Default',
         'unique' => 'Unik',
         'auto_increment' => 'Auto Increment',
         'unsigned' => 'Unsigned',
+        // From new content
+        'indexed' => 'Indexed',
+        'foreign_key' => 'Foreign Key',
     ],
 
     // Actions
@@ -107,15 +110,28 @@ return [
         'back' => 'Kembali',
         'save' => 'Simpan',
         'remove' => 'Hapus',
+        // From new content
+        'reset_form' => 'Reset Form',
+        'back_to_columns' => 'Kembali ke Kolom',
+        'next_step' => 'Lanjut',
+        'previous_step' => 'Sebelumnya',
     ],
 
-    // Notifications
+    // Notifications (merged)
     'notifications' => [
         'duplicate_columns' => 'Nama kolom duplikat terdeteksi',
         'preview_generated' => 'Pratinjau berhasil dibuat',
         'preview_generated_body' => 'Tinjau pratinjau migrasi di langkah Pratinjau & Konfirmasi.',
         'table_created' => 'Tabel berhasil dibuat',
         'table_created_body' => 'Tabel :table telah berhasil dibuat.',
+        // From new content
+        'table_created_new' => 'Tabel Berhasil Dibuat',
+        'table_created_body_new' => 'Tabel ":table" berhasil dibuat dalam database.',
+        'table_creation_failed' => 'Gagal Membuat Tabel',
+        'table_exists' => 'Tabel Sudah Ada',
+        'table_exists_body' => 'Tabel ":table" sudah ada dalam database. Silakan gunakan nama yang berbeda.',
+        'duplicate_columns_new' => 'Nama kolom tidak boleh sama',
+        'preview_warning' => 'Peringatan Pratinjau',
     ],
 
     // Validation messages
@@ -124,5 +140,37 @@ return [
         'foreign_table_required' => 'Foreign key harus mereferensikan tabel.',
         'duplicate_column_names' => 'Nama kolom duplikat terdeteksi.',
         'invalid_column_name' => 'Nama kolom tidak valid atau sudah digunakan sistem untuk :name.',
+    ],
+
+    // From new content
+    'loading_create' => 'Membuat tabel...',
+    'loading_reset' => 'Mereset form...',
+    'columns_count' => 'kolom',
+    'sample_data_notice' => 'Data di atas adalah contoh untuk pratinjau saja',
+    'no_preview_available' => 'Pratinjau tidak tersedia. Klik tombol "Muat Ulang Pratinjau" untuk membuat pratinjau.',
+    'form_reset_success' => 'Form berhasil direset',
+    'wizard_reset_complete' => 'Wizard berhasil direset ke langkah pertama',
+    'no_valid_columns' => 'Tidak ada kolom yang valid',
+    'no_valid_columns_helper' => 'Pastikan setiap kolom memiliki nama dan tipe yang valid.',
+    'table_creation_success' => 'Tabel berhasil dibuat! Form akan direset otomatis.',
+    'migration_generated' => 'Kode migrasi berhasil dibuat',
+    'create_table_confirm' => 'Apakah Anda yakin ingin membuat tabel ini? Tindakan ini tidak dapat dibatalkan.',
+    'reset_form_confirm' => 'Apakah Anda yakin ingin mereset form ini? Semua data akan hilang.',
+
+    // Status Messages
+    'status' => [
+        'ready_to_create' => 'Siap untuk membuat tabel',
+        'validating' => 'Memvalidasi data...',
+        'creating_table' => 'Membuat tabel di database...',
+        'cleaning_up' => 'Membersihkan data...',
+        'completed' => 'Selesai',
+    ],
+
+    // Help Text
+    'help' => [
+        'table_creation' => 'Setelah tabel dibuat, form akan otomatis direset ke langkah pertama.',
+        'migration_code' => 'Kode ini menunjukkan bagaimana tabel akan dibuat dalam database.',
+        'preview_data' => 'Data pratinjau hanya untuk visualisasi, bukan data sebenarnya.',
+        'column_validation' => 'Pastikan semua nama kolom unik dan menggunakan format yang benar.',
     ],
 ];

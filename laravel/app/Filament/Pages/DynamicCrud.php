@@ -173,16 +173,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ->sortable();
             } elseif (in_array($type, ['enum', 'set'], true)) {
                 $col = BadgeColumn::make($name)
-                    ->formatStateUsing(fn ($state) => (string) $state)
+                    ->formatStateUsing(fn($state) => (string) $state)
                     ->colors([
-                        'primary' => fn ($state) => filled($state),
+                        'primary' => fn($state) => filled($state),
                     ])
                     ->sortable()
                     ->toggleable();
             } elseif (in_array($type, ['json'], true)) {
                 $col = TextColumn::make($name)
                     ->limit(60)
-                    ->tooltip(fn ($state) => \is_string($state) ? $state : json_encode($state))
+                    ->tooltip(fn($state) => \is_string($state) ? $state : json_encode($state))
                     ->toggleable();
             } else {
                 $col = TextColumn::make($name)
@@ -209,8 +209,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->label('Add record')
                 ->icon('heroicon-o-plus-circle')
                 ->color('primary')
-                ->visible(fn () => filled($this->selectedTable))
-                ->form(fn () => $this->inferFormSchema(isEdit: false))
+                ->visible(fn() => filled($this->selectedTable))
+                ->form(fn() => $this->inferFormSchema(isEdit: false))
                 ->using(function (array $data): Model {
                     $model = new DynamicModel();
                     $model->setRuntimeTable($this->selectedTable);
@@ -231,7 +231,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->label('Export CSV')
                 ->icon('heroicon-o-arrow-down-tray')
                 ->color('gray')
-                ->visible(fn () => filled($this->selectedTable))
+                ->visible(fn() => filled($this->selectedTable))
                 ->action('exportCsv'),
         ];
     }
@@ -240,12 +240,12 @@ class DynamicCrud extends Page implements HasTable, HasForms
     {
         return [
             ViewAction::make()
-                ->form(fn ($record) => $this->inferFormSchema(isEdit: false, forView: true))
+                ->form(fn($record) => $this->inferFormSchema(isEdit: false, forView: true))
                 ->modalHeading('View record')
                 ->label('View'),
             EditAction::make()
                 ->label('Edit')
-                ->form(fn ($record) => $this->inferFormSchema(isEdit: true))
+                ->form(fn($record) => $this->inferFormSchema(isEdit: true))
                 ->using(function (Model $record, array $data) {
                     $this->applySafeDefaults($data, isEdit: true);
 
@@ -263,7 +263,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
             DeleteAction::make()
                 ->label('Delete')
                 ->requiresConfirmation()
-                ->visible(fn () => !$this->isSystemTable($this->selectedTable))
+                ->visible(fn() => !$this->isSystemTable($this->selectedTable))
                 ->before(function (Model $record) {
                     // Optional: Check FK constraints proactively
                     // Rely on DB constraints to block if violation occurs.
@@ -314,9 +314,9 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->falseLabel('Exclude trashed')
                 ->nullable()
                 ->queries(
-                    true: fn (Builder $query) => $query->whereNotNull($this->qualified('deleted_at')),
-                    false: fn (Builder $query) => $query->whereNull($this->qualified('deleted_at')),
-                    blank: fn (Builder $query) => $query
+                    true: fn(Builder $query) => $query->whereNotNull($this->qualified('deleted_at')),
+                    false: fn(Builder $query) => $query->whereNull($this->qualified('deleted_at')),
+                    blank: fn(Builder $query) => $query
                 );
         }
 
@@ -350,29 +350,29 @@ class DynamicCrud extends Page implements HasTable, HasForms
             // Type mapping
             $component = match (true) {
                 in_array($type, ['text', 'mediumText', 'longText'], true) =>
-                    Forms\Components\Textarea::make($name)->rows(4),
-                in_array($type, ['integer','tinyint','smallint','mediumint','bigint'], true) =>
-                    Forms\Components\TextInput::make($name)->numeric(),
-                in_array($type, ['decimal','float','double'], true) =>
-                    Forms\Components\TextInput::make($name)->numeric(),
+                Forms\Components\Textarea::make($name)->rows(4),
+                in_array($type, ['integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true) =>
+                Forms\Components\TextInput::make($name)->numeric(),
+                in_array($type, ['decimal', 'float', 'double'], true) =>
+                Forms\Components\TextInput::make($name)->numeric(),
                 $type === 'boolean' =>
-                    Forms\Components\Toggle::make($name),
-                in_array($type, ['date','time'], true) =>
-                    Forms\Components\DateTimePicker::make($name)->withoutTime()->native(false),
-                in_array($type, ['datetime','datetimetz','timestamp'], true) =>
-                    Forms\Components\DateTimePicker::make($name)->native(false),
+                Forms\Components\Toggle::make($name),
+                in_array($type, ['date', 'time'], true) =>
+                Forms\Components\DateTimePicker::make($name)->withoutTime()->native(false),
+                in_array($type, ['datetime', 'datetimetz', 'timestamp'], true) =>
+                Forms\Components\DateTimePicker::make($name)->native(false),
                 $type === 'json' =>
-                    Forms\Components\KeyValue::make($name)->addable()->deletable()->reorderable()->keyLabel('key')->valueLabel('value'),
+                Forms\Components\KeyValue::make($name)->addable()->deletable()->reorderable()->keyLabel('key')->valueLabel('value'),
                 in_array($type, ['enum', 'set'], true) =>
-                    Forms\Components\Select::make($name)
-                        ->options(function () use ($name, $meta) {
-                            $opts = $meta['options'] ?? [];
-                            return array_combine($opts, $opts);
-                        })
-                        ->multiple($type === 'set')
-                        ->searchable(),
+                Forms\Components\Select::make($name)
+                    ->options(function () use ($name, $meta) {
+                        $opts = $meta['options'] ?? [];
+                        return array_combine($opts, $opts);
+                    })
+                    ->multiple($type === 'set')
+                    ->searchable(),
                 default =>
-                    Forms\Components\TextInput::make($name)->maxLength($length ?: 65535),
+                Forms\Components\TextInput::make($name)->maxLength($length ?: 65535),
             };
 
             // Foreign key inference (_id postfix)
@@ -380,20 +380,22 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 $refTable = Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
                 if (Schema::hasTable($refTable)) {
                     $labelColumn = $this->guessLabelColumn($refTable);
-                        $component = Forms\Components\Select::make($name)
-                            ->searchable()
-                            ->getSearchResultsUsing(fn (string $search) =>
-                                DB::table($refTable)
-                                    ->where($labelColumn, 'like', "%{$search}%")
-                                    ->limit(50)
-                                    ->pluck($labelColumn, 'id')
-                            )
-                            ->getOptionLabelUsing(fn ($value): ?string =>
-                                DB::table($refTable)
-                                    ->where('id', $value)
-                                    ->value($labelColumn)
-                            )
-                            ->helperText("References {$refTable}.{$labelColumn}");
+                    $component = Forms\Components\Select::make($name)
+                        ->searchable()
+                        ->getSearchResultsUsing(
+                            fn(string $search) =>
+                            DB::table($refTable)
+                                ->where($labelColumn, 'like', "%{$search}%")
+                                ->limit(50)
+                                ->pluck($labelColumn, 'id')
+                        )
+                        ->getOptionLabelUsing(
+                            fn($value): ?string =>
+                            DB::table($refTable)
+                                ->where('id', $value)
+                                ->value($labelColumn)
+                        )
+                        ->helperText("References {$refTable}.{$labelColumn}");
                 }
             }
 
@@ -407,10 +409,10 @@ class DynamicCrud extends Page implements HasTable, HasForms
             if ($length && \is_int($length) && !$forView && $component instanceof Forms\Components\TextInput) {
                 $component->maxLength($length);
             }
-            if (in_array($type, ['integer','tinyint','smallint','mediumint','bigint','decimal','float','double'], true) && !$forView) {
+            if (in_array($type, ['integer', 'tinyint', 'smallint', 'mediumint', 'bigint', 'decimal', 'float', 'double'], true) && !$forView) {
                 $rules[] = 'numeric';
             }
-            if (in_array($type, ['date','time','datetime','datetimetz','timestamp'], true) && !$forView) {
+            if (in_array($type, ['date', 'time', 'datetime', 'datetimetz', 'timestamp'], true) && !$forView) {
                 $rules[] = 'date';
             }
             if ($rules) {
@@ -428,7 +430,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return $schema;
     }
 
-    protected function applySafeDefaults(array & $data, bool $isEdit): void
+    protected function applySafeDefaults(array &$data, bool $isEdit): void
     {
         // Remove system columns and immutable primary when editing
         foreach (array_keys($data) as $key) {
@@ -539,10 +541,23 @@ class DynamicCrud extends Page implements HasTable, HasForms
         if (!$name) return true;
 
         $excluded = [
-            'migrations', 'failed_jobs', 'password_reset_tokens', 'password_resets',
-            'personal_access_tokens', 'cache', 'jobs', 'job_batches', 'permissions', 'roles',
-            'model_has_permissions', 'model_has_roles', 'role_has_permissions',
-            'admin_audit_logs', 'dynamic_tables',
+            'migrations',
+            'failed_jobs',
+            'password_reset_tokens',
+            'password_resets',
+            'personal_access_tokens',
+            'cache',
+            'jobs',
+            'job_batches',
+            'permissions',
+            'roles',
+            'model_has_permissions',
+            'model_has_roles',
+            'role_has_permissions',
+            'admin_audit_logs',
+            'dynamic_tables',
+            'cache_locks',
+            'sessions'
         ];
 
         return in_array($name, $excluded, true);
