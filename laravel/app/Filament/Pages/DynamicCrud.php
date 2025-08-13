@@ -380,12 +380,20 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 $refTable = Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
                 if (Schema::hasTable($refTable)) {
                     $labelColumn = $this->guessLabelColumn($refTable);
-                    $component = Forms\Components\Select::make($name)
-                        ->searchable()
-                        ->options(function () use ($refTable, $labelColumn) {
-                            return DB::table($refTable)->orderBy($labelColumn)->pluck($labelColumn, 'id')->toArray();
-                        })
-                        ->helperText("References {$refTable}.{$labelColumn}");
+                        $component = Forms\Components\Select::make($name)
+                            ->searchable()
+                            ->getSearchResultsUsing(fn (string $search) =>
+                                DB::table($refTable)
+                                    ->where($labelColumn, 'like', "%{$search}%")
+                                    ->limit(50)
+                                    ->pluck($labelColumn, 'id')
+                            )
+                            ->getOptionLabelUsing(fn ($value): ?string =>
+                                DB::table($refTable)
+                                    ->where('id', $value)
+                                    ->value($labelColumn)
+                            )
+                            ->helperText("References {$refTable}.{$labelColumn}");
                 }
             }
 

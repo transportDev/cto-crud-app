@@ -379,18 +379,56 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${ACTIVE_COLOR}" = "blue" ]; then OLD_PROJ="cto_blue"; else OLD_PROJ="cto_green"; fi
-          if [ "${NEW_COLOR}" = "blue" ]; then NEW_PROJ="cto_blue"; else NEW_PROJ="cto_green"; fi
-          if docker ps --format '{{.Names}}' | grep -q "${OLD_PROJ}-web-"; then
-            echo "Stopping old web (${OLD_PROJ})"
-            docker compose -p "${OLD_PROJ}" --env-file env/production.env -f docker-compose.prod.yml stop web || true
+
+          # Determine project names
+          if [ "${ACTIVE_COLOR}" = "blue" ]; then 
+            OLD_PROJ="cto_blue"
+          else 
+            OLD_PROJ="cto_green"
           fi
+
+          if [ "${NEW_COLOR}" = "blue" ]; then 
+            NEW_PROJ="cto_blue"
+          else 
+            NEW_PROJ="cto_green"
+          fi
+
+          echo "Switching from ${ACTIVE_COLOR} (${OLD_PROJ}) to ${NEW_COLOR} (${NEW_PROJ})"
+
+          # Set image variables for new deployment
           export IMAGE_PHP="ghcr.io/${REPO_LC}-php:${TAG}"
           export IMAGE_NGINX="ghcr.io/${REPO_LC}-nginx:${TAG}"
           export WEB_PORT_BIND="0.0.0.0:80"
+
+          # 🔧 FIX: Stop old web container FIRST and wait for port to be freed
+          if docker ps --format '{{.Names}}' | grep -q "${OLD_PROJ}-web-"; then
+            echo "Stopping old web container (${OLD_PROJ})"
+            docker compose -p "${OLD_PROJ}" --env-file env/production.env -f docker-compose.prod.yml stop web
+            
+            # Wait for port 80 to be freed
+            for i in $(seq 1 30); do
+              if ! netstat -tuln | grep -q ":80 "; then
+                echo "Port 80 is now free"
+                break
+              fi
+              echo "Waiting for port 80 to be freed... (${i}/30)"
+              sleep 1
+            done
+          fi
+
+          # Start new web container on port 80
+          echo "Starting new web container (${NEW_PROJ}) on port 80"
           docker compose -p "${NEW_PROJ}" --env-file env/production.env -f docker-compose.prod.yml up -d web
+
+          # Start supporting services
           docker compose -p "${NEW_PROJ}" --env-file env/production.env -f docker-compose.prod.yml up -d queue scheduler
+
+          # Clean up old containers if switching colors
           if [ "${ACTIVE_COLOR}" != "${NEW_COLOR}" ]; then
+            echo "Cleaning up old environment (${OLD_PROJ})"
             docker compose -p "${OLD_PROJ}" --env-file env/production.env -f docker-compose.prod.yml stop queue scheduler app || true
           fi
+
+          # Update active color state
           echo "${NEW_COLOR}" | sudo tee /opt/cto-crud/state/active_color >/dev/null
+          echo "✅ Traffic successfully switched to ${NEW_COLOR} environment"
