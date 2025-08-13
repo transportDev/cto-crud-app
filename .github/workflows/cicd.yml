@@ -160,20 +160,26 @@ jobs:
         with:
           context: .
           file: docker/prod/php.Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/${{ env.REPO_LC }}-php:${{ env.SHA }}
             ghcr.io/${{ env.REPO_LC }}-php:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/${{ env.REPO_LC }}-php:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=ghcr.io/${{ env.REPO_LC }}-php:buildcache,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
       - name: Build and push Nginx image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/prod/nginx.Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/${{ env.REPO_LC }}-nginx:${{ env.SHA }}
