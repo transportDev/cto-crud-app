@@ -43,6 +43,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
     protected static ?int $navigationSort = 2;
     protected static string $view = 'filament.pages.dynamic-crud';
     protected static ?string $title = 'CTO CRUD';
+    protected static ?string $slug = 'crud';
 
     // Header selector form
     public ?array $config = [];
@@ -115,7 +116,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->emptyStateHeading($this->selectedTable ? 'Tidak ada data ditemukan' : 'Pilih tabel untuk memulai')
             ->emptyStateDescription($this->selectedTable
                 ? 'Belum ada data pada tabel ini. Tambahkan data baru untuk mulai mengelola.'
-                : 'Gunakan pemilih di atas untuk memilih tabel. Anda juga dapat membuat tabel baru melalui Table Builder.')
+                : 'Gunakan pemilih di atas untuk memilih tabel. Anda juga dapat membuat tabel baru melalui Pembuat Tabel.')
             ->striped()
             ->deferLoading()
             ->paginated([10, 25, 50, 100]);
@@ -206,10 +207,13 @@ class DynamicCrud extends Page implements HasTable, HasForms
     {
         return [
             CreateAction::make()
-                ->label('Add record')
+                ->label('Tambah data')
                 ->icon('heroicon-o-plus-circle')
                 ->color('primary')
                 ->visible(fn() => filled($this->selectedTable))
+                ->modalHeading(fn() => 'Tambah Data - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
+                ->modalSubmitActionLabel('Simpan')
+                ->modalCancelActionLabel('Batal')
                 ->form(fn() => $this->inferFormSchema(isEdit: false))
                 ->using(function (array $data): Model {
                     $model = new DynamicModel();
@@ -226,9 +230,10 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ]);
 
                     return $record;
-                }),
+                })
+                ->successNotificationTitle('Data berhasil ditambahkan'),
             Action::make('export_csv')
-                ->label('Export CSV')
+                ->label('Ekspor CSV')
                 ->icon('heroicon-o-arrow-down-tray')
                 ->color('gray')
                 ->visible(fn() => filled($this->selectedTable))
@@ -241,10 +246,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return [
             ViewAction::make()
                 ->form(fn($record) => $this->inferFormSchema(isEdit: false, forView: true))
-                ->modalHeading('View record')
-                ->label('View'),
+                ->modalHeading(fn() => 'Lihat Data - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
+                ->modalSubmitActionLabel('Tutup')
+                ->label('Lihat'),
             EditAction::make()
-                ->label('Edit')
+                ->label('Ubah')
+                ->modalHeading(fn() => 'Edit Record - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
+                ->modalSubmitActionLabel('Simpan')
+                ->modalCancelActionLabel('Batal')
                 ->form(fn($record) => $this->inferFormSchema(isEdit: true))
                 ->using(function (Model $record, array $data) {
                     $this->applySafeDefaults($data, isEdit: true);
@@ -259,10 +268,15 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ]);
 
                     return $record;
-                }),
+                })
+                ->successNotificationTitle('Data berhasil diperbarui'),
             DeleteAction::make()
-                ->label('Delete')
+                ->label('Hapus')
                 ->requiresConfirmation()
+                ->modalHeading('Konfirmasi Hapus')
+                ->modalDescription('Apakah Anda yakin ingin menghapus data ini? Tindakan ini tidak dapat dibatalkan.')
+                ->modalSubmitActionLabel('Hapus')
+                ->modalCancelActionLabel('Batal')
                 ->visible(fn() => !$this->isSystemTable($this->selectedTable))
                 ->before(function (Model $record) {
                     // Optional: Check FK constraints proactively
@@ -273,7 +287,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         'table' => $this->selectedTable,
                         'id' => $record->{$this->primaryKeyName()},
                     ]);
-                }),
+                })
+                ->successNotificationTitle('Data berhasil dihapus'),
         ];
     }
 
@@ -281,10 +296,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
     {
         return [
             BulkAction::make('bulk_delete')
-                ->label('Delete selected')
+                ->label('Hapus yang dipilih')
                 ->color('danger')
                 ->icon('heroicon-o-trash')
                 ->requiresConfirmation()
+                ->modalHeading('Konfirmasi Hapus Massal')
+                ->modalDescription('Apakah Anda yakin ingin menghapus data yang dipilih? Tindakan ini tidak dapat dibatalkan.')
+                ->modalSubmitActionLabel('Hapus')
+                ->modalCancelActionLabel('Batal')
                 ->action(function (Tables\Actions\BulkAction $action) {
                     $model = new DynamicModel();
                     $model->setRuntimeTable($this->selectedTable);
@@ -299,6 +318,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         ]);
                     }
                 })
+                ->successNotificationTitle('Data terpilih berhasil dihapus')
                 ->deselectRecordsAfterCompletion(),
         ];
     }
@@ -309,9 +329,9 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
         if ($this->hasDeletedAtColumn()) {
             $filters[] = Tables\Filters\TernaryFilter::make('trashed')
-                ->label('Trashed')
-                ->trueLabel('Only trashed')
-                ->falseLabel('Exclude trashed')
+                ->label('Sampah')
+                ->trueLabel('Hanya yang dihapus')
+                ->falseLabel('Kecualikan yang dihapus')
                 ->nullable()
                 ->queries(
                     true: fn(Builder $query) => $query->whereNotNull($this->qualified('deleted_at')),
@@ -362,7 +382,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 in_array($type, ['datetime', 'datetimetz', 'timestamp'], true) =>
                 Forms\Components\DateTimePicker::make($name)->native(false),
                 $type === 'json' =>
-                Forms\Components\KeyValue::make($name)->addable()->deletable()->reorderable()->keyLabel('key')->valueLabel('value'),
+                Forms\Components\KeyValue::make($name)->addable()->deletable()->reorderable()->keyLabel('kunci')->valueLabel('nilai'),
                 in_array($type, ['enum', 'set'], true) =>
                 Forms\Components\Select::make($name)
                     ->options(function () use ($name, $meta) {
@@ -395,7 +415,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                                 ->where('id', $value)
                                 ->value($labelColumn)
                         )
-                        ->helperText("References {$refTable}.{$labelColumn}");
+                        ->helperText("Referensi {$refTable}.{$labelColumn}");
                 }
             }
 
@@ -584,7 +604,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
     {
         $table = $this->selectedTable;
         if (!$table) {
-            Notification::make()->danger()->title('No table selected')->send();
+            Notification::make()->danger()->title('Tidak ada tabel yang dipilih')->send();
             return;
         }
 
