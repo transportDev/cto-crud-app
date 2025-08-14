@@ -9,6 +9,8 @@ use Filament\Pages\Auth\Login as BaseLogin;
 
 class Login extends BaseLogin
 {
+    protected static string $view = 'filament.pages.auth.login';
+
     public function form(Form $form): Form
     {
         return $form
@@ -26,9 +28,15 @@ class Login extends BaseLogin
             ->label(__('filament-panels::pages/auth/login.form.email.label'))
             ->email()
             ->required()
-            ->autocomplete()
+            ->autocomplete('username')
             ->autofocus()
-            ->extraInputAttributes(['tabindex' => 1]);
+            ->prefixIcon('heroicon-o-user')
+            ->extraInputAttributes([
+                'tabindex' => 1,
+                'aria-label' => 'Email address',
+                'inputmode' => 'email',
+                'class' => 'login-input font-mono',
+            ]);
     }
 
     protected function getPasswordFormComponent(): Component
@@ -37,7 +45,14 @@ class Login extends BaseLogin
             ->label(__('filament-panels::pages/auth/login.form.password.label'))
             ->password()
             ->required()
-            ->extraInputAttributes(['tabindex' => 2]);
+            ->prefixIcon('heroicon-o-lock-closed')
+            ->revealable()
+            ->autocomplete('current-password')
+            ->extraInputAttributes([
+                'tabindex' => 2,
+                'aria-label' => 'Password',
+                'class' => 'login-input font-mono',
+            ]);
     }
 
     protected function getCredentialsFromFormData(array $data): array

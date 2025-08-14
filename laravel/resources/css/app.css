@@ -1,3 +1,123 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+    --primary-red: #ec1c24;
+    --dark-red: #8b0000;
+    --carbon-black: #0a0a0b;
+    --steel-gray: #1a1a1d;
+    --electric-blue: #00d4ff;
+    --success-green: #00ff88;
+}
+
+@layer base {
+    html,
+    body {
+        background-color: var(--carbon-black);
+        color: #fff;
+    }
+    /* Ensure strong contrast for accessibility */
+    .text-gray-300 {
+        color: #d1d5db;
+    }
+    .text-gray-400 {
+        color: #9ca3af;
+    }
+    .text-gray-500 {
+        color: #6b7280;
+    }
+}
+
+@layer components {
+    .login-card {
+        animation: floaty 6s ease-in-out infinite;
+        max-height: 72vh;
+        overflow: hidden;
+    }
+    .login-card-glow {
+        background: radial-gradient(
+                800px 200px at 20% -20%,
+                rgba(236, 28, 36, 0.15),
+                rgba(236, 28, 36, 0) 40%
+            ),
+            radial-gradient(
+                600px 200px at 120% 120%,
+                rgba(0, 212, 255, 0.12),
+                rgba(0, 212, 255, 0) 40%
+            );
+        filter: blur(10px);
+    }
+    /* Remove any default borders inside Filament auth card */
+    .login-card .fi-input,
+    .login-card .fi-section,
+    .login-card .fi-fo-field-wrp,
+    .login-card .fi-fo-field-wrp::before {
+        border: 0 !important;
+    }
+    .login-input:focus {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(236, 28, 36, 0.35),
+            0 6px 24px rgba(236, 28, 36, 0.25);
+        border-color: rgba(236, 28, 36, 0.5);
+    }
+    .login-input:focus-visible {
+        outline: 2px solid var(--primary-red);
+        outline-offset: 2px;
+    }
+    /* Harmonize Filament input height and rounded corners for cleaner layout */
+    .login-card .fi-input,
+    .login-card input[type="email"],
+    .login-card input[type="password"] {
+        height: 48px;
+        border-radius: 12px;
+    }
+    .login-button {
+        height: 52px;
+        background-image: linear-gradient(
+            135deg,
+            var(--primary-red) 0%,
+            var(--dark-red) 100%
+        );
+        box-shadow: 0 4px 12px rgba(236, 28, 36, 0.25);
+        transition: box-shadow 0.3s ease, transform 0.2s ease;
+    }
+    .login-card [type="submit"],
+    .login-card button[type="submit"],
+    .login-card .fi-btn {
+        height: 52px;
+        background-image: linear-gradient(
+            135deg,
+            var(--primary-red) 0%,
+            var(--dark-red) 100%
+        );
+        color: #fff;
+        box-shadow: 0 4px 12px rgba(236, 28, 36, 0.25);
+        transition: box-shadow 0.3s ease, transform 0.2s ease;
+        border: none;
+    }
+    .login-card [type="submit"]:hover,
+    .login-card button[type="submit"]:hover,
+    .login-card .fi-btn:hover {
+        box-shadow: 0 4px 20px rgba(236, 28, 36, 0.4);
+        transform: translateY(-1px);
+    }
+    .login-button:hover {
+        box-shadow: 0 4px 20px rgba(236, 28, 36, 0.4);
+        transform: translateY(-1px);
+    }
+    .login-button:focus-visible {
+        outline: 2px solid var(--primary-red);
+        outline-offset: 3px;
+    }
+}
+
+@keyframes floaty {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-3px);
+    }
+}
