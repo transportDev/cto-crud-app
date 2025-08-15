@@ -26,6 +26,7 @@ RUN apk add --no-cache \
       freetype freetype-dev \
       oniguruma oniguruma-dev \
       libxml2 libxml2-dev \
+      sqlite sqlite-dev \
       autoconf make g++ \
       mysql-client
 
@@ -34,6 +35,8 @@ RUN apk add --no-cache \
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
   && docker-php-ext-install -j$(nproc) \
         pdo_mysql \
+        pdo_sqlite \
+        sqlite3 \
         mbstring \
         bcmath \
         intl \

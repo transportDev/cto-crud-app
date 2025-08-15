@@ -302,8 +302,9 @@ class TableBuilderService
             $table->fullText($name);
         }
 
-        // Primary
-        if (!empty($col['primary'])) {
+        // Primary: avoid duplicate primary keys when the column type already implies primary
+        $impliesPrimary = ($type === 'bigInteger' && !empty($col['auto_increment']));
+        if (!empty($col['primary']) && !$impliesPrimary) {
             $table->primary($name);
         }
 

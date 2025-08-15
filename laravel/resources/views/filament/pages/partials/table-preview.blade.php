@@ -14,15 +14,16 @@
         </div>
     @elseif($loading ?? false)
         {{-- Loading state --}}
-        <div class="flex flex-col items-center justify-center py-12 text-center bg-gray-50/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-600">
-            <div class="flex items-center space-x-2 mb-4">
-                <div class="animate-spin rounded-full h-6 w-6 border-2 border-gray-300 border-t-primary-600 dark:border-gray-600 dark:border-t-primary-400"></div>
-                <div class="animate-pulse h-2 w-16 bg-gray-300 dark:bg-gray-600 rounded"></div>
-            </div>
-            <p class="text-sm text-gray-600 dark:text-gray-400">
-                {{ __('table-builder.loading_preview') }}
-            </p>
-        </div>
+		<div class="flex flex-col items-center justify-center py-12 text-center bg-gray-50/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-600">
+			<style>
+				.tb-loader{width:45px;aspect-ratio:.75;--c:no-repeat linear-gradient(currentColor 0 0);background:var(--c) 0% 100%,var(--c) 50% 100%,var(--c) 100% 100%;background-size:20% 65%;animation:tb-l8 1s infinite linear}
+				@keyframes tb-l8{16.67%{background-position:0% 0%,50% 100%,100% 100%}33.33%{background-position:0% 0%,50% 0%,100% 100%}50%{background-position:0% 0%,50% 0%,100% 0%}66.67%{background-position:0% 100%,50% 0%,100% 0%}83.33%{background-position:0% 100%,50% 100%,100% 0%}}
+			</style>
+			<div class="tb-loader text-primary-600 dark:text-primary-400"></div>
+			<p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
+				{{ __('table-builder.loading_preview') }}
+			</p>
+		</div>
     @elseif(isset($tablePreview['headers']) && isset($tablePreview['rows']))
         {{-- Table preview --}}
         <div class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">

@@ -1,2 +1,4 @@
 .env
 docker/php/entrypoint.sh
+laravel/docs/**
+laravel/cto_db
