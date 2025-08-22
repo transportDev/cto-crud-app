@@ -30,7 +30,9 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class DynamicCrud extends Page implements HasTable, HasForms
 {
@@ -48,6 +50,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
     // Header selector form
     public ?array $config = [];
     public ?string $selectedTable = null;
+    public bool $showAllColumns = false;
 
     public static function canAccess(): bool
     {
@@ -73,6 +76,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
         if (!self::canAccess()) {
             abort(403);
         }
+
+        $this->showAllColumns = (bool) session('crud_show_all_columns', false);
 
         $tables = $svc->listUserTables();
         if (!$this->selectedTable && !empty($tables)) {
@@ -119,7 +124,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 : 'Gunakan pemilih di atas untuk memilih tabel. Anda juga dapat membuat tabel baru melalui Pembuat Tabel.')
             ->striped()
             ->deferLoading()
-            ->paginated([10, 25, 50, 100]);
+            ->paginated([10, 25, 50, 100])
+            ->defaultSort($this->primaryKeyName(), 'asc');
     }
 
     protected function getRuntimeQuery(): Builder
@@ -150,9 +156,10 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
         $columns = $this->getColumnMeta();
         $filamentColumns = [];
+    $allColumnNames = array_keys($columns);
 
         // Prefer to show up to 8 columns in the table by default
-        $displayColumns = \array_slice($columns, 0, 8, preserve_keys: true);
+        $displayColumns = $this->showAllColumns ? $columns : \array_slice($columns, 0, 12, preserve_keys: true);
 
         foreach ($displayColumns as $name => $meta) {
             $label = Str::headline($name);
@@ -160,7 +167,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
             $type = $meta['type'] ?? 'string';
             $col = null;
 
-            if ($type === 'boolean') {
+        if ($type === 'boolean') {
                 $col = IconColumn::make($name)
                     ->boolean()
                     ->trueIcon('heroicon-o-check-circle')
@@ -170,7 +177,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
             } elseif (in_array($type, ['date', 'datetime', 'datetimetz', 'timestamp', 'time'], true)) {
                 $col = TextColumn::make($name)
                     ->dateTime()
-                    ->toggleable()
+            ->toggleable()
                     ->sortable();
             } elseif (in_array($type, ['enum', 'set'], true)) {
                 $col = BadgeColumn::make($name)
@@ -182,19 +189,55 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ->toggleable();
             } elseif (in_array($type, ['json'], true)) {
                 $col = TextColumn::make($name)
-                    ->limit(60)
+                    ->limit(80)
                     ->tooltip(fn($state) => \is_string($state) ? $state : json_encode($state))
+                    ->wrap()
                     ->toggleable();
             } else {
                 $col = TextColumn::make($name)
                     ->label($label)
                     ->searchable(in_array($type, ['string', 'text', 'char', 'uuid', 'ulid'], true))
-                    ->toggleable()
+                    ->lineClamp(2)
+                    ->tooltip(fn($state) => (string) $state)
+                    ->copyable()
+            ->toggleable()
                     ->sortable();
             }
 
             if ($this->isPrimaryKey($name)) {
                 $col->label($label . ' (PK)')->weight('bold');
+            }
+
+            // Enhance FK columns to display human-readable labels instead of raw IDs
+            $isRedundantFk = false;
+            if ($this->looksLikeForeignKey($name)) {
+                $baseName = (string) Str::of($name)->beforeLast('_id');
+                if (in_array($baseName, $allColumnNames, true)) {
+                    $isRedundantFk = true; // human-readable sibling exists
+                }
+                $refTable = $this->mapForeignKeyTable($name) ?? \Illuminate\Support\Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
+                if (Schema::hasTable($refTable)) {
+                    $labelColumn = $this->guessLabelColumnFor($refTable) ?? $this->guessLabelColumn($refTable);
+                    $pk = $this->detectPrimaryKeyFromDatabase($refTable) ?: 'id';
+                    $col = TextColumn::make($name)
+                        ->label($label)
+                        ->formatStateUsing(function ($state) use ($refTable, $labelColumn, $pk) {
+                            if ($state === null) return null;
+                            if ($refTable === 'equipment_type_lookup') {
+                                return DB::table($refTable)
+                                    ->where($pk, $state)
+                                    ->selectRaw("CONCAT(COALESCE(type_alpro,''),' - ',COALESCE(category_alpro,'')) AS __label")
+                                    ->value('__label') ?? $state;
+                            }
+                            return DB::table($refTable)->where($pk, $state)->value($labelColumn ?: $pk) ?? $state;
+                        })
+                        ->sortable();
+                }
+            }
+
+            // Hide redundant *_id columns by default if a sibling text column exists
+            if ($isRedundantFk && method_exists($col, 'toggleable')) {
+                $col->toggleable(isToggledHiddenByDefault: true);
             }
 
             $filamentColumns[] = $col;
@@ -220,6 +263,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     $model->setRuntimeTable($this->selectedTable);
 
                     $this->applySafeDefaults($data, isEdit: false);
+                    $this->applyDerivedLookups($data);
 
                     $record = $model->create($data);
 
@@ -238,6 +282,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->color('gray')
                 ->visible(fn() => filled($this->selectedTable))
                 ->action('exportCsv'),
+            Action::make('toggleColumns')
+                ->label(fn() => $this->showAllColumns ? 'Tampilkan lebih sedikit kolom' : 'Tampilkan semua kolom')
+                ->icon('heroicon-o-table-cells')
+                ->color('gray')
+                ->visible(fn() => filled($this->selectedTable))
+                ->action(function () {
+                    $this->showAllColumns = ! $this->showAllColumns;
+                    session(['crud_show_all_columns' => $this->showAllColumns]);
+                    $this->resetTable(); // re-render columns
+                }),
         ];
     }
 
@@ -249,43 +303,89 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->modalHeading(fn() => 'Lihat Data - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
                 ->modalSubmitActionLabel('Tutup')
                 ->label('Lihat'),
+
             EditAction::make()
                 ->label('Ubah')
                 ->modalHeading(fn() => 'Edit Record - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
                 ->modalSubmitActionLabel('Simpan')
                 ->modalCancelActionLabel('Batal')
                 ->form(fn($record) => $this->inferFormSchema(isEdit: true))
-                ->using(function (Model $record, array $data) {
+                ->mutateRecordDataUsing(function (array $data): array {
+                    // Remove any system fields that shouldn't be updated
                     $this->applySafeDefaults($data, isEdit: true);
+                    return $data;
+                })
+                ->using(function (Model $record, array $data) {
+                    // Ensure the model knows its table and primary key
+                    if ($record instanceof DynamicModel) {
+                        $record->setRuntimeTable($this->selectedTable);
+                    }
 
-                    $record->fill($data);
-                    $record->save();
+                    // Get the actual primary key name and value
+                    $primaryKeyName = $this->primaryKeyName();
+                    $primaryKeyValue = $record->getAttribute($primaryKeyName);
+
+                    if (!$primaryKeyValue) {
+                        throw new \Exception("Cannot update record without primary key value");
+                    }
+
+                    // Clean the data
+                    $this->applySafeDefaults($data, isEdit: true);
+                    $this->applyDerivedLookups($data);
+
+                    // Option 1: Direct database update (more reliable for dynamic tables)
+                    DB::table($this->selectedTable)
+                        ->where($primaryKeyName, $primaryKeyValue)
+                        ->update($data);
+
+                    // Refresh the model
+                    $freshRecord = DB::table($this->selectedTable)
+                        ->where($primaryKeyName, $primaryKeyValue)
+                        ->first();
+
+                    if ($freshRecord) {
+                        $record->setRawAttributes((array) $freshRecord, true);
+                    }
 
                     $this->audit('record.updated', [
                         'table' => $this->selectedTable,
-                        'id' => $record->{$this->primaryKeyName()},
+                        'id' => $primaryKeyValue,
                         'changes' => $data,
                     ]);
 
                     return $record;
                 })
                 ->successNotificationTitle('Data berhasil diperbarui'),
+
             DeleteAction::make()
                 ->label('Hapus')
                 ->requiresConfirmation()
                 ->modalHeading('Konfirmasi Hapus')
-                ->modalDescription('Apakah Anda yakin ingin menghapus data ini? Tindakan ini tidak dapat dibatalkan.')
+                ->modalDescription('Apakah Anda yakin ingin menghapus data ini?')
                 ->modalSubmitActionLabel('Hapus')
                 ->modalCancelActionLabel('Batal')
                 ->visible(fn() => !$this->isSystemTable($this->selectedTable))
-                ->before(function (Model $record) {
-                    // Optional: Check FK constraints proactively
-                    // Rely on DB constraints to block if violation occurs.
-                })
-                ->after(function (Model $record) {
+                ->action(function (Model $record) {
+                    // Ensure the model knows its table
+                    if ($record instanceof DynamicModel) {
+                        $record->setRuntimeTable($this->selectedTable);
+                    }
+
+                    $primaryKeyName = $this->primaryKeyName();
+                    $primaryKeyValue = $record->getAttribute($primaryKeyName);
+
+                    if (!$primaryKeyValue) {
+                        throw new \Exception("Cannot delete record without primary key value");
+                    }
+
+                    // Use direct query for deletion
+                    DB::table($this->selectedTable)
+                        ->where($primaryKeyName, $primaryKeyValue)
+                        ->delete();
+
                     $this->audit('record.deleted', [
                         'table' => $this->selectedTable,
-                        'id' => $record->{$this->primaryKeyName()},
+                        'id' => $primaryKeyValue,
                     ]);
                 })
                 ->successNotificationTitle('Data berhasil dihapus'),
@@ -347,6 +447,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
     {
         $schema = [];
         $columns = $this->getColumnMeta();
+        $componentsByName = [];
 
         foreach ($columns as $name => $meta) {
             if ($this->isSystemColumn($name)) {
@@ -357,13 +458,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
             $nullable = (bool) ($meta['nullable'] ?? false);
             $length = $meta['length'] ?? null;
 
-            // Primary keys are not editable once created if unsafe
-            if ($this->isPrimaryKey($name) && $isEdit) {
-                $component = Forms\Components\TextInput::make($name)
-                    ->disabled()
-                    ->dehydrated(false)
-                    ->label(Str::headline($name));
-                $schema[] = $component;
+            // Primary keys: hide on create, show read-only on edit
+            if ($this->isPrimaryKey($name)) {
+                if ($isEdit) {
+                    $component = Forms\Components\TextInput::make($name)
+                        ->disabled()
+                        ->dehydrated(false)
+                        ->label(Str::headline($name));
+                    $schema[] = $component;
+                }
+                // Skip adding PK field on create forms entirely
                 continue;
             }
 
@@ -395,31 +499,75 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 Forms\Components\TextInput::make($name)->maxLength($length ?: 65535),
             };
 
-            // Foreign key inference (_id postfix)
+            // Foreign key inference (_id postfix) with smart mapping & filters
             if ($this->looksLikeForeignKey($name)) {
-                $refTable = Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
+                $refTable = $this->mapForeignKeyTable($name) ?? Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
+
                 if (Schema::hasTable($refTable)) {
-                    $labelColumn = $this->guessLabelColumn($refTable);
+                    $labelColumn = $this->guessLabelColumnFor($refTable) ?? $this->guessLabelColumn($refTable);
+
+                    // Optional where filters based on domain (vendor/category types)
+                    $whereFilters = $this->getForeignSelectFilters($name, $refTable);
+
                     $component = Forms\Components\Select::make($name)
                         ->searchable()
-                        ->getSearchResultsUsing(
-                            fn(string $search) =>
-                            DB::table($refTable)
-                                ->where($labelColumn, 'like', "%{$search}%")
-                                ->limit(50)
-                                ->pluck($labelColumn, 'id')
-                        )
-                        ->getOptionLabelUsing(
-                            fn($value): ?string =>
-                            DB::table($refTable)
-                                ->where('id', $value)
-                                ->value($labelColumn)
-                        )
+                        ->preload()
+                        ->getSearchResultsUsing(function (string $search) use ($refTable, $labelColumn, $whereFilters) {
+                            $q = DB::table($refTable)->limit(50);
+                            $pk = $this->detectPrimaryKeyFromDatabase($refTable) ?: 'id';
+                            foreach ($whereFilters as $filter) {
+                                $q = $filter($q);
+                            }
+                            if ($refTable === 'equipment_type_lookup') {
+                                $q->select([$pk, DB::raw("CONCAT(COALESCE(type_alpro,''),' - ',COALESCE(category_alpro,'')) AS __label")]);
+                                if ($search !== '') {
+                                    $q->where(function ($w) use ($search) {
+                                        $w->where('type_alpro', 'like', "%{$search}%")
+                                            ->orWhere('category_alpro', 'like', "%{$search}%");
+                                    });
+                                }
+                                return $q->pluck('__label', $pk);
+                            }
+                            if ($labelColumn !== 'id' && $labelColumn) {
+                                $q->where($labelColumn, 'like', "%{$search}%");
+                            }
+                            return $q->pluck($labelColumn ?: $pk, $pk);
+                        })
+                        ->getOptionLabelUsing(function ($value) use ($refTable, $labelColumn) {
+                            if ($value === null) return null;
+                            $pk = $this->detectPrimaryKeyFromDatabase($refTable) ?: 'id';
+                            if ($refTable === 'equipment_type_lookup') {
+                                return DB::table($refTable)
+                                    ->where($pk, $value)
+                                    ->selectRaw("CONCAT(COALESCE(type_alpro,''),' - ',COALESCE(category_alpro,'')) AS __label")
+                                    ->value('__label');
+                            }
+                            return DB::table($refTable)->where($pk, $value)->value($labelColumn ?: $pk);
+                        })
                         ->helperText("Referensi {$refTable}.{$labelColumn}");
+
+                    // Inline create for known lookup tables
+                    if (in_array($refTable, ['vendor_lookup', 'category_lookup', 'transport_type_lookup', 'regional_lookup'], true)) {
+                        $component->createOptionForm($this->buildCreateOptionForm($name, $refTable))
+                            ->createOptionUsing(function (array $data) use ($name, $refTable) {
+                                // Normalize payload and ensure DB compatibility
+                                $payload = $this->normalizeCreateOptionPayload($name, $refTable, $data);
+                                $payload = $this->ensureTimestampsIfPresent($refTable, $payload);
+                                $payload = $this->sanitizeInsertPayload($refTable, $payload);
+                                return DB::table($refTable)->insertGetId($payload);
+                            });
+                    }
                 }
             }
 
-            $component->label(Str::headline($name));
+            // Friendly labels for specific FK fields
+            if ($this->selectedTable === 'data_osn' && $name === 'regional_id') {
+                $component->label('Regional');
+            } elseif ($this->selectedTable === 'data_osn' && $name === 'regional_fe_id') {
+                $component->label('Regional Fe');
+            } else {
+                $component->label(Str::headline($name));
+            }
 
             // Validation
             $rules = [];
@@ -444,10 +592,82 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 $component->disabled()->dehydrated(false);
             }
 
-            $schema[] = $component;
+            // store by name to allow grouping later
+            $componentsByName[$name] = $component;
+        }
+
+        // Apply domain-specific tweaks (conditional visibility/requirements)
+        $this->applyDomainFieldTweaks($componentsByName);
+
+        // If we have known tables, group fields into sections for better UX
+        $schema = $this->maybeGroupIntoSections($componentsByName);
+
+        // Auto-sync text columns for known FK fields on save (before dehydration)
+        if (!$forView) {
+            $this->attachAutosyncDehydrationHooks($schema);
         }
 
         return $schema;
+    }
+
+    /**
+     * Populate companion text columns from selected foreign keys for known tables.
+     */
+    protected function applyDerivedLookups(array &$data): void
+    {
+        if (!$this->selectedTable) return;
+
+        if ($this->selectedTable === 'data_osn') {
+            // regional_id -> regional (name)
+            if (array_key_exists('regional_id', $data)) {
+                $pk = $this->detectPrimaryKeyFromDatabase('regional_lookup') ?: 'regional_id';
+                $data['regional'] = $data['regional_id']
+                    ? (DB::table('regional_lookup')->where($pk, $data['regional_id'])->value('regional_name') ?? null)
+                    : null;
+            }
+            // regional_fe_id -> regional_fe (name)
+            if (array_key_exists('regional_fe_id', $data)) {
+                $pk = $this->detectPrimaryKeyFromDatabase('regional_lookup') ?: 'regional_id';
+                $data['regional_fe'] = $data['regional_fe_id']
+                    ? (DB::table('regional_lookup')->where($pk, $data['regional_fe_id'])->value('regional_name') ?? null)
+                    : null;
+            }
+        }
+    }
+
+    /**
+     * Attach dehydration hooks to copy human-readable labels into companion text columns
+     * when only FK selects are displayed.
+     */
+    protected function attachAutosyncDehydrationHooks(array &$schema): void
+    {
+        if ($this->selectedTable === 'data_osn') {
+            // Map regional_id -> regional, regional_fe_id -> regional_fe
+            $sync = function ($get, $set, string $fkField, string $textField) {
+                $id = $get($fkField);
+                if ($id) {
+                    $pk = $this->detectPrimaryKeyFromDatabase('regional_lookup') ?: 'regional_id';
+                    $name = DB::table('regional_lookup')->where($pk, $id)->value('regional_name');
+                    if ($name) $set($textField, $name);
+                } else {
+                    $set($textField, null);
+                }
+            };
+
+            foreach ($schema as $section) {
+                if (method_exists($section, 'getChildComponents')) {
+                    foreach ($section->getChildComponents() as $component) {
+                        $field = method_exists($component, 'getName') ? $component->getName() : null;
+                        if (in_array($field, ['regional_id', 'regional_fe_id'], true)) {
+                            $component->dehydrated(true)->afterStateUpdated(function ($state, callable $set, callable $get) use ($field, $sync) {
+                                $text = $field === 'regional_id' ? 'regional' : 'regional_fe';
+                                $sync($get, $set, $field, $text);
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
 
     protected function applySafeDefaults(array &$data, bool $isEdit): void
@@ -468,6 +688,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 $data['updated_at'] = now();
             }
         }
+
+        // Convert empty strings to null for nullable columns to respect DB nullability
+        if ($this->selectedTable) {
+            $meta = $this->getColumnMeta();
+            foreach ($data as $k => $v) {
+                if ($v === '' && ($meta[$k]['nullable'] ?? false)) {
+                    $data[$k] = null;
+                }
+            }
+        }
     }
 
     protected function isPrimaryKey(string $column): bool
@@ -477,25 +707,57 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
     protected function primaryKeyName(): string
     {
-        // Heuristic: id or {table}_id
         if (!$this->selectedTable) {
             return 'id';
         }
 
-        // Laravel's native schema builder doesn't have a universal, reliable way to get
-        // the primary key name across all DB drivers without Doctrine. We'll use a
-        // reliable heuristic that covers 99% of cases.
-        if (Schema::hasColumn($this->selectedTable, 'id')) {
+        // Use caching to avoid repeated database queries
+        $cacheKey = 'pk_' . config('database.default') . '_' . $this->selectedTable;
+
+        return Cache::remember($cacheKey, 3600, function () {
+            return $this->detectPrimaryKeyFromDatabase($this->selectedTable);
+        });
+    }
+    /**
+     * Detect primary key from database information schema
+     * Reuse the same logic as DynamicModel
+     */
+    protected function detectPrimaryKeyFromDatabase(string $table): string
+    {
+        $connection = config('database.default');
+        $database = config("database.connections.{$connection}.database");
+
+        try {
+            if (in_array($connection, ['mysql', 'mariadb'])) {
+                $result = DB::select("
+                SELECT COLUMN_NAME 
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+                WHERE TABLE_SCHEMA = ? 
+                AND TABLE_NAME = ? 
+                AND CONSTRAINT_NAME = 'PRIMARY'
+                ORDER BY ORDINAL_POSITION
+                LIMIT 1
+            ", [$database, $table]);
+
+                if (!empty($result)) {
+                    return $result[0]->COLUMN_NAME ?? $result[0]->column_name ?? 'id';
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning("Failed to detect primary key for table {$table}: " . $e->getMessage());
+        }
+
+        // Fallback to convention
+        if (Schema::hasColumn($table, 'id')) {
             return 'id';
         }
 
-        $guess = Str::of($this->selectedTable)->singular()->snake()->append('_id')->toString();
-        if (Schema::hasColumn($this->selectedTable, $guess)) {
+        $guess = Str::of($table)->singular()->snake()->append('_id')->toString();
+        if (Schema::hasColumn($table, $guess)) {
             return $guess;
         }
 
-        // Fallback to the first column if no better guess.
-        $columns = Schema::getColumnListing($this->selectedTable);
+        $columns = Schema::getColumnListing($table);
         return $columns[0] ?? 'id';
     }
 
@@ -527,6 +789,311 @@ class DynamicCrud extends Page implements HasTable, HasForms
             }
         }
         return 'id';
+    }
+
+    /**
+     * Domain-aware label column guessing for known lookup tables.
+     */
+    protected function guessLabelColumnFor(string $table): ?string
+    {
+        $map = [
+            'vendor_lookup' => 'vendor_name',
+            'category_lookup' => 'category_name',
+            // schema uses `transport_type` (not transport_type_name)
+            'transport_type_lookup' => 'transport_type',
+            'regional_lookup' => 'regional_name',
+            // equipment types use a composite label; return null to trigger composite handling
+            'equipment_type_lookup' => null,
+        ];
+        $col = $map[$table] ?? null;
+        return ($col === null) ? null : ((Schema::hasColumn($table, $col)) ? $col : null);
+    }
+
+    /**
+     * Map a foreign key column name to an actual reference table, when conventional pluralization fails.
+     */
+    protected function mapForeignKeyTable(string $column): ?string
+    {
+        $map = [
+            // vendor_*_id columns all map to vendor_lookup
+            'vendor_trm_id' => 'vendor_lookup',
+            'vendor_ipmw_id' => 'vendor_lookup',
+            'vendor_transmisi_id' => 'vendor_lookup',
+            'vendor_owner_id' => 'vendor_lookup',
+            // category_* columns map to category_lookup
+            'type_alpro_id' => 'category_lookup',
+            'category_alpro_id' => 'category_lookup',
+            'category_tematik_id' => 'category_lookup',
+            'category_sla_id' => 'category_lookup',
+            'project_milestones_id' => 'category_lookup',
+            // regionals
+            'regional_id' => 'regional_lookup',
+            'regional_fe_id' => 'regional_lookup',
+            // transports
+            'transport_type_id' => 'transport_type_lookup',
+            // equipment type
+            'equipment_type_id' => 'equipment_type_lookup',
+        ];
+
+        $ref = $map[$column] ?? null;
+        return $ref && Schema::hasTable($ref) ? $ref : null;
+    }
+
+    /**
+     * Return closures to apply where filters for FK selects (vendor/category type scoping).
+     */
+    protected function getForeignSelectFilters(string $column, string $refTable): array
+    {
+        $filters = [];
+
+    if ($refTable === 'vendor_lookup' && Schema::hasColumn('vendor_lookup', 'vendor_type')) {
+            $type = null;
+            if (str_contains($column, 'trm')) $type = 'TRM';
+            elseif (str_contains($column, 'ipmw')) $type = 'IPMW';
+            elseif (str_contains($column, 'transmisi')) $type = 'TRANSMISI';
+            elseif (str_contains($column, 'owner')) $type = 'OWNER';
+
+            if ($type) {
+                $filters[] = fn($q) => $q->where('vendor_type', $type);
+            }
+        }
+
+        if ($refTable === 'category_lookup') {
+            $ctype = null;
+            if ($column === 'type_alpro_id') $ctype = 'ALPRO_TYPE';
+            elseif ($column === 'category_alpro_id') $ctype = 'ALPRO_CATEGORY';
+            elseif ($column === 'category_tematik_id') $ctype = 'TEMATIK';
+            elseif ($column === 'category_sla_id') $ctype = 'SLA';
+            elseif ($column === 'project_milestones_id') $ctype = 'PROJECT';
+
+            if ($ctype) {
+                $filters[] = fn($q) => $q->where('category_type', $ctype);
+            }
+        }
+
+        return $filters;
+    }
+
+    /**
+     * Build createOptionForm for lookup selects.
+     */
+    protected function buildCreateOptionForm(string $column, string $refTable): array
+    {
+        if ($refTable === 'vendor_lookup') {
+            $defaultType = null;
+            if (str_contains($column, 'trm')) $defaultType = 'TRM';
+            elseif (str_contains($column, 'ipmw')) $defaultType = 'IPMW';
+            elseif (str_contains($column, 'transmisi')) $defaultType = 'TRANSMISI';
+            elseif (str_contains($column, 'owner')) $defaultType = 'OWNER';
+
+            $fields = [
+                Forms\Components\TextInput::make('vendor_name')->label('Vendor Name')->required(),
+            ];
+            // Only show vendor_type if the column exists in schema
+            if (Schema::hasColumn('vendor_lookup', 'vendor_type')) {
+                $fields[] = Forms\Components\Select::make('vendor_type')->label('Vendor Type')->options([
+                    'IPMW' => 'IPMW',
+                    'TRANSMISI' => 'TRANSMISI',
+                    'TRM' => 'TRM',
+                    'OWNER' => 'OWNER',
+                ])->default($defaultType)->required();
+            }
+            return $fields;
+        }
+
+        if ($refTable === 'category_lookup') {
+            $defaultType = match ($column) {
+                'type_alpro_id' => 'ALPRO_TYPE',
+                'category_alpro_id' => 'ALPRO_CATEGORY',
+                'category_tematik_id' => 'TEMATIK',
+                'category_sla_id' => 'SLA',
+                'project_milestones_id' => 'PROJECT',
+                default => null,
+            };
+            return [
+                Forms\Components\TextInput::make('category_name')->label('Category Name')->required(),
+                Forms\Components\Select::make('category_type')->label('Category Type')->options([
+                    'ALPRO_TYPE' => 'ALPRO_TYPE',
+                    'ALPRO_CATEGORY' => 'ALPRO_CATEGORY',
+                    'TEMATIK' => 'TEMATIK',
+                    'SLA' => 'SLA',
+                    'PROJECT' => 'PROJECT',
+                ])->default($defaultType)->required(),
+            ];
+        }
+
+        if ($refTable === 'transport_type_lookup') {
+            return [
+                Forms\Components\TextInput::make('transport_type')->label('Transport Type')->required(),
+            ];
+        }
+
+        if ($refTable === 'regional_lookup') {
+            return [
+                Forms\Components\TextInput::make('regional_name')->label('Regional')->required(),
+            ];
+        }
+
+        return [];
+    }
+
+    /**
+     * Normalize createOption payload to table columns.
+     */
+    protected function normalizeCreateOptionPayload(string $column, string $refTable, array $data): array
+    {
+        if ($refTable === 'vendor_lookup') {
+            $payload = [
+                'vendor_name' => $data['vendor_name'] ?? null,
+            ];
+            if (Schema::hasColumn('vendor_lookup', 'vendor_type')) {
+                $payload['vendor_type'] = $data['vendor_type'] ?? null;
+            }
+            return $payload;
+        }
+        if ($refTable === 'category_lookup') {
+            return [
+                'category_name' => $data['category_name'] ?? null,
+                'category_type' => $data['category_type'] ?? null,
+            ];
+        }
+        if ($refTable === 'transport_type_lookup') {
+            return [
+                'transport_type' => $data['transport_type'] ?? null,
+            ];
+        }
+        if ($refTable === 'regional_lookup') {
+            return [
+                'regional_name' => $data['regional_name'] ?? null,
+            ];
+        }
+        return $data;
+    }
+
+    /**
+     * Add timestamps to payload only if the target table has the columns.
+     */
+    protected function ensureTimestampsIfPresent(string $table, array $payload): array
+    {
+        try {
+            if (Schema::hasColumn($table, 'created_at')) {
+                $payload['created_at'] = $payload['created_at'] ?? now();
+            }
+            if (Schema::hasColumn($table, 'updated_at')) {
+                $payload['updated_at'] = $payload['updated_at'] ?? now();
+            }
+        } catch (\Throwable $e) {
+            // Best-effort; ignore if schema introspection fails
+        }
+        return $payload;
+    }
+
+    /**
+     * Filter payload to only include columns that exist in the table.
+     */
+    protected function sanitizeInsertPayload(string $table, array $payload): array
+    {
+        try {
+            $columns = Schema::getColumnListing($table);
+            return Arr::only($payload, $columns);
+        } catch (\Throwable $e) {
+            // If we can't read columns, return as-is (DB will error if invalid)
+            return $payload;
+        }
+    }
+
+    /**
+     * Group known-table components into sections for improved UX when possible.
+     */
+    protected function maybeGroupIntoSections(array $componentsByName): array
+    {
+        $name = $this->selectedTable;
+        if (!$name) return array_values($componentsByName);
+
+        $S = fn($title, array $fields) => \Filament\Forms\Components\Section::make($title)
+            ->schema(array_values(array_intersect_key($componentsByName, array_flip($fields))))
+            ->columns(2);
+
+        switch ($name) {
+            case 'masterdata':
+                return array_filter([
+                    $S('Site & Hop', ['site_id', 'hop_id', 'hop_name']),
+                    // include both FK and text columns to avoid dropping fields
+                    $S('Equipment', ['equipment_type_id', 'type_alpro_id', 'category_alpro_id', 'type_alpro', 'category_alpro', 'link_type']),
+                    $S('Vendors', ['vendor_ipmw_id', 'vendor_transmisi_id', 'vendor_ipmw', 'vendor_transmisi']),
+                    $S('Details', ['hop_site_name', 'ns', 'rtpo', 'kab', 'remark']),
+                ]);
+            case 'bwsetting':
+                return array_filter([
+                    $S('Site & Transport', ['site_id', 'transport_type_id', 'transport_type']),
+                    $S('Vendor & Owner', ['vendor_trm_id', 'vendor_trm', 'link_owner']),
+                    $S('Hop Details', ['hop_name', 'site_id_fe', 'po_order', 'config']),
+                    $S('Capacity & Billing', ['link_capacity', 'bw_setting', 'bw_billing', 'remarks']),
+                ]);
+            case 'data_osn':
+                return array_filter([
+                    $S('Site & Direction', ['site_id', 'direction', 'ne', 'source_port_ne']),
+                    $S('Far End', ['ne_fe', 'site_id_fe', 'sink_port_fe']),
+                    // only show FK selects; text columns will be auto-filled from FK on save
+                    $S('Regionals', ['regional_id', 'regional_fe_id']),
+                    $S('Other', ['length_km', 'remark', 'remarks']),
+                ]);
+            case 'data_ip_nms':
+                return array_filter([
+                    $S('Site & IP', ['site_id', 'asset', 'idu_type', 'vlan', 'ip_address']),
+                ]);
+            case 'nimorder':
+                return array_filter([
+                    $S('Site & Order', ['site_id', 'nd_nim_no', 'order_batch', 'site_name']),
+                    $S('Regions & Counts', ['tsel_reg', 'tlk_reg', 'island', 'count_bw', 'regional_id', 'mitra_id', 'mitra']),
+                    // include text columns too to avoid missed inputs
+                    $S('Categories & SLA', ['category_tematik_id', 'category_sla_id', 'project_milestones_id', 'category_tematik', 'category_sla', 'project_milestones', 'durasi_sla_day', 'sla_status']),
+                    $S('Dates & Status', ['start_target_date', 'target_date', 'on_air_date', 'current_date', 'status_final', 'ordertype']),
+                ]);
+            default:
+                return array_values($componentsByName);
+        }
+    }
+
+    /**
+     * Apply conditional visibility/requirements for known domain tables.
+     */
+    protected function applyDomainFieldTweaks(array &$componentsByName): void
+    {
+        $table = $this->selectedTable;
+        if (!$table) return;
+
+        // Helper to safely fetch component
+        $cmp = function (string $name) use (&$componentsByName) {
+            return $componentsByName[$name] ?? null;
+        };
+
+        if ($table === 'bwsetting') {
+            // Show PO Order only when vendor_trm_id selected
+            if ($c = $cmp('po_order')) {
+                $c->visible(fn($get) => filled($get('vendor_trm_id')));
+            }
+            // Require bw_billing when bw_setting is provided
+            if ($c = $cmp('bw_billing')) {
+                $c->required(fn($get) => filled($get('bw_setting')));
+            }
+        }
+
+        if ($table === 'masterdata') {
+            // Require vendor by link_type
+            if ($c = $cmp('vendor_ipmw_id')) {
+                $c->required(fn($get) => strtolower((string)$get('link_type')) === 'mw');
+            }
+            if ($c = $cmp('vendor_transmisi_id')) {
+                $c->required(fn($get) => strtolower((string)$get('link_type')) === 'fo');
+            }
+        }
+
+        if ($table === 'data_osn') {
+            // Always show Far End fields and Regionals to avoid missing values on create/edit
+            // (was previously conditionally visible)
+            // no-op: ensure components remain visible by default
+        }
     }
 
     protected function getColumnMeta(): array
@@ -598,6 +1165,69 @@ class DynamicCrud extends Page implements HasTable, HasForms
         } catch (\Throwable $e) {
             // Do not block the UI if audit logging fails
         }
+    }
+
+    public function getTableRecordKey(Model $record): string
+    {
+        // Use the correct primary key name
+        $primaryKey = $this->primaryKeyName();
+
+        // Try to get the value using the correct primary key
+        $value = $record->getAttribute($primaryKey);
+
+        // If that doesn't work, try the model's own primary key
+        if ($value === null && $record->getKeyName()) {
+            $value = $record->getKey();
+        }
+
+        if ($value !== null) {
+            return (string) $value;
+        }
+
+        // Fallback logic for tables without proper primary keys
+        $fallbackColumns = $this->getFallbackKeyColumns();
+        $keyParts = [];
+
+        foreach ($fallbackColumns as $column) {
+            $columnValue = $record->getAttribute($column);
+            if ($columnValue !== null) {
+                $keyParts[] = $columnValue;
+            }
+        }
+
+        if (empty($keyParts)) {
+            // Last resort: try to use any unique identifier
+            $allAttributes = $record->getAttributes();
+            if (!empty($allAttributes)) {
+                return md5(json_encode($allAttributes));
+            }
+
+            throw new \Exception("Cannot generate unique key for table '{$this->selectedTable}'.");
+        }
+
+        return implode('-', $keyParts);
+    }
+
+    /**
+     * Get fallback columns to use when primary key is missing
+     */
+    protected function getFallbackKeyColumns(): array
+    {
+        if (!$this->selectedTable) {
+            return [];
+        }
+
+        // Define fallback columns for each table without primary keys
+        $fallbackMap = [
+            'bwsetting' => ['bw_record_id'], // Use the auto-increment ID
+            'data_ip_nms' => ['ip_record_id'],
+            'data_osn' => ['osn_record_id'],
+            'linkroute' => ['link_record_id'],
+            'masterdata' => ['master_record_id'],
+            'nimorder' => ['order_record_id'],
+        ];
+
+        return $fallbackMap[$this->selectedTable] ?? ['created_at', 'updated_at'];
     }
 
     public function exportCsv()
