@@ -81,111 +81,45 @@ class DynamicFormService
                     $labelCol = null;
                     $labelCols = [];
                     try {
-                        $meta = CtoTableMeta::query()->where('table_name', $refTable)->first();
-                        if ($meta) {
-                            $displayTemplate = is_array($meta->display_template) ? $meta->display_template : null;
-                            $labelCols = isset($displayTemplate['columns']) && is_array($displayTemplate['columns']) ? $displayTemplate['columns'] : [];
-                            $searchCol = $meta->search_column ?: null;
-                            $labelCol = $meta->label_column ?: null;
+                        $meta = CtoTableMeta::where('table_name', $refTable)->first();
+                        $displayTemplate = $meta?->display_template;
+                        $searchCol = $meta?->search_column;
+                        $labelCol = $meta?->label_column ?? $this->schema->guessLabelColumn($refTable);
+                        if ($displayTemplate && !empty($displayTemplate['columns'])) {
+                            $labelCols = $displayTemplate['columns'];
                         }
                     } catch (\Throwable $e) { /* ignore */
                     }
-                    // If creating, embed inputs instead of showing raw FK
-                    if (!$isEdit) {
-                        $cols = !empty($labelCols) ? $labelCols : array_filter([$labelCol ?: $this->schema->guessLabelColumn($refTable)]);
-                        $groupFields = [];
-                        foreach ($cols as $c) {
-                            if (!Schema::hasColumn($refTable, $c)) continue;
-                            $groupFields[] = Forms\Components\TextInput::make('fk_new__' . $name . '__' . $refTable . '__' . $c)
+
+                    // Embedded form for creating new FK record
+                    if (!empty($labelCols)) {
+                        $embeddedInputs = [];
+                        foreach ($labelCols as $c) {
+                            $cMeta = $this->schema->columns($refTable)[$c] ?? null;
+                            if (!$cMeta) continue;
+                            
+                            $inputKey = 'fk_new__' . $name . '__' . $refTable . '__' . $c;
+
+                            // Each field from the related table becomes a searchable, creatable select
+                            $input = Forms\Components\Select::make($inputKey)
                                 ->label(Str::headline($c))
-                                ->required(!$nullable && !$forView)
-                                ->disabled($forView)
-                                ->dehydrated(true);
+                                ->options(function() use ($refTable, $c) {
+                                    // Provide existing distinct values for this column as options
+                                    return DB::table($refTable)->distinct()->pluck($c, $c);
+                                })
+                                ->searchable()
+                                ->createOptionForm([
+                                    Forms\Components\TextInput::make('value')->label('New Value')->required(),
+                                ])
+                                ->createOptionUsing(fn (array $data) => $data['value']);
+
+                            $embeddedInputs[] = $input;
                         }
-                        if (!empty($groupFields)) {
-                            // Use FK column name as context label to differentiate multiple FKs to the same table
-                            $components[] = Forms\Components\Fieldset::make($this->humanizeFkLabel($name))
-                                ->schema($groupFields)
-                                ->columns(min(2, count($groupFields)));
-                            continue; // skip default FK component
-                        }
+                        $components[] = Forms\Components\Fieldset::make($this->humanizeFkLabel($name))
+                            ->schema($embeddedInputs)
+                            ->columns(count($embeddedInputs) > 1 ? 2 : 1);
+                        continue; // Skip default component creation at the end
                     }
-                    // Default: searchable select with inline create
-                    // Determine display column fallback (label_column -> guessLabelColumn -> pk)
-                    $displayCol = $labelCol && Schema::hasColumn($refTable, $labelCol) ? $labelCol : ($this->schema->guessLabelColumn($refTable) ?: $this->schema->primaryKey($refTable));
-                    // Determine search column
-                    $search = $searchCol && Schema::hasColumn($refTable, $searchCol) ? $searchCol : $this->schema->bestSearchColumn($refTable);
-                    $component = Forms\Components\Select::make($name)
-                        ->searchable()
-                        ->getSearchResultsUsing(function (string $searchTerm) use ($refTable, $search, $displayCol, $refPk, $displayTemplate, $labelCols) {
-                            $limit = (int)config('cto.fk_search_limit', 50);
-                            if (!empty($labelCols)) {
-                                $cols = array_unique(array_merge([$refPk], (array)$labelCols));
-                                $query = DB::table($refTable)->select($cols);
-                                if (Schema::hasColumn($refTable, $search)) {
-                                    $query->where($search, 'like', "%{$searchTerm}%");
-                                }
-                                $rows = $query->limit($limit)->get();
-                                $out = [];
-                                foreach ($rows as $r) {
-                                    $rowArr = (array)$r;
-                                    $rendered = null;
-                                    if ($displayTemplate && !empty($displayTemplate['template'])) {
-                                        $rendered = app(DynamicSchemaService::class)->renderTemplateLabel($displayTemplate, $rowArr);
-                                    }
-                                    if ($rendered === null || $rendered === '') {
-                                        $vals = [];
-                                        foreach ($labelCols as $c) {
-                                            $vals[] = (string)($rowArr[$c] ?? '');
-                                        }
-                                        $rendered = trim(implode(' - ', $vals));
-                                    }
-                                    if ($rendered === '') {
-                                        $rendered = ($rowArr[$displayCol] ?? $rowArr[$refPk] ?? null);
-                                    }
-                                    if ($rendered !== null) {
-                                        $out[$rowArr[$refPk]] = $rendered;
-                                    }
-                                }
-                                return $out;
-                            }
-                            $q = DB::table($refTable);
-                            if (Schema::hasColumn($refTable, $search)) {
-                                $q->where($search, 'like', "%{$searchTerm}%");
-                            }
-                            if (Schema::hasColumn($refTable, $displayCol)) {
-                                $q->orderBy($displayCol);
-                                return $q->limit($limit)->pluck($displayCol, $refPk);
-                            }
-                            return $q->limit($limit)->pluck($refPk, $refPk);
-                        })
-                        ->getOptionLabelUsing(function ($value) use ($refTable, $displayCol, $search, $refPk, $displayTemplate, $labelCols) {
-                            if ($value === null || $value === '') return null;
-                            if (!empty($labelCols)) {
-                                $cols = array_unique(array_merge([$refPk], (array)$labelCols));
-                                $row = DB::table($refTable)->select($cols)->where($refPk, $value)->first();
-                                if ($row) {
-                                    $rowArr = (array)$row;
-                                    $labelStr = null;
-                                    if ($displayTemplate && !empty($displayTemplate['template'])) {
-                                        $labelStr = app(DynamicSchemaService::class)->renderTemplateLabel($displayTemplate, $rowArr);
-                                    }
-                                    if ($labelStr === null || $labelStr === '') {
-                                        $vals = [];
-                                        foreach ($labelCols as $c) {
-                                            $vals[] = (string)($rowArr[$c] ?? '');
-                                        }
-                                        $labelStr = trim(implode(' - ', $vals));
-                                    }
-                                    if ($labelStr !== '') return $labelStr;
-                                }
-                            }
-                            if (Schema::hasColumn($refTable, $displayCol)) {
-                                return DB::table($refTable)->where($refPk, $value)->value($displayCol);
-                            }
-                            return (string) $value;
-                        })
-                        ->helperText("Sumber: {$refTable}." . (Schema::hasColumn($refTable, $displayCol) ? $displayCol : $refPk) . " — Ketik untuk mencari, pilih salah satu.");
                 }
             }
 
