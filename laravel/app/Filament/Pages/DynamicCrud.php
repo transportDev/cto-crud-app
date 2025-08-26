@@ -134,6 +134,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->headerActions($this->buildHeaderActions())
             ->actions($this->buildRowActions())
             ->bulkActions($this->buildBulkActions())
+            // Hide the toggle-columns dropdown trigger button
+            ->toggleColumnsTriggerAction(fn(Action $action) => $action->hidden())
             ->emptyStateHeading($this->selectedTable ? 'Tidak ada data ditemukan' : 'Pilih tabel untuk memulai')
             ->emptyStateDescription($this->selectedTable
                 ? 'Belum ada data pada tabel ini. Tambahkan data baru untuk mulai mengelola.'
@@ -183,29 +185,24 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         ->falseColor('danger');
                 } elseif (in_array($type, ['date', 'datetime', 'datetimetz', 'timestamp', 'time'], true)) {
                     $col = TextColumn::make($name)
-                        ->dateTime()
-                        ->toggleable()
-                        ->sortable();
+                        ->dateTime();
                 } elseif (in_array($type, ['enum', 'set'], true)) {
                     $col = BadgeColumn::make($name)
                         ->formatStateUsing(fn($state) => (string) $state)
                         ->colors([
                             'primary' => fn($state) => filled($state),
                         ])
-                        ->sortable()
-                        ->toggleable();
+                        ->sortable();
                 } elseif (in_array($type, ['json'], true)) {
                     $col = TextColumn::make($name)
                         ->limit(60)
-                        ->tooltip(fn($state) => \is_string($state) ? $state : json_encode($state))
-                        ->toggleable();
+                        ->tooltip(fn($state) => \is_string($state) ? $state : json_encode($state));
                 } else {
                     $isTextLike = in_array($type, ['string', 'char', 'uuid', 'ulid'], true);
                     $searchable = $isTextLike && app(DynamicSchemaService::class)->isIndexed($this->selectedTable, $name);
                     $col = TextColumn::make($name)
                         ->label($label)
                         ->searchable($searchable)
-                        ->toggleable()
                         ->sortable();
                 }
 
@@ -219,8 +216,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 $alias = app(DynamicQueryBuilder::class)->columnAlias($fkCol, $refTable, $refCol);
                 $label = Str::headline($refTable . ' ' . $refCol);
                 $filamentColumns[] = TextColumn::make($alias)
-                    ->label($label)
-                    ->toggleable();
+                    ->label($label);
             }
         }
 
@@ -349,11 +345,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
     protected function buildRowActions(): array
     {
         return [
-            ViewAction::make()
-                ->form(fn($record) => $this->inferFormSchema(false, true))
-                ->modalHeading(fn() => 'Lihat Data - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
-                ->modalSubmitActionLabel('Tutup')
-                ->label('Lihat'),
             EditAction::make()
                 ->label('Ubah')
                 ->modalHeading(fn() => 'Edit Record - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))

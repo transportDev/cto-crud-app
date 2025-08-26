@@ -103,7 +103,8 @@ class DynamicFormService
                                 ->dehydrated(true);
                         }
                         if (!empty($groupFields)) {
-                            $components[] = Forms\Components\Fieldset::make(Str::headline($refTable))
+                            // Use FK column name as context label to differentiate multiple FKs to the same table
+                            $components[] = Forms\Components\Fieldset::make($this->humanizeFkLabel($name))
                                 ->schema($groupFields)
                                 ->columns(min(2, count($groupFields)));
                             continue; // skip default FK component
@@ -188,7 +189,12 @@ class DynamicFormService
                 }
             }
 
-            $component->label(Str::headline($name));
+            // Prefer humanized FK label for *_id columns, otherwise default to column name
+            if ($this->looksLikeForeignKey($table, $name)) {
+                $component->label($this->humanizeFkLabel($name));
+            } else {
+                $component->label(Str::headline($name));
+            }
 
             if (!$nullable && !$forView) $component->required();
             if ($length && is_int($length) && !$forView && $component instanceof Forms\Components\TextInput) $component->maxLength($length);
@@ -273,5 +279,22 @@ class DynamicFormService
     protected function looksLikeForeignKey(string $table, string $column): bool
     {
         return Str::endsWith($column, '_id') && $column !== $this->schema->primaryKey($table);
+    }
+
+    /**
+     * Turn an FK column like `regional_fe_id` into a friendly label like `Regional FE`.
+     * - Strips trailing _id
+     * - Converts snake_case to Headline
+     * - Uppercases common abbreviations (FE, IP, URL, ID)
+     */
+    protected function humanizeFkLabel(string $fkColumn): string
+    {
+        $base = Str::of($fkColumn)->beforeLast('_id')->replace('_', ' ')->headline()->toString();
+        // Uppercase common abbreviations when they appear as separate tokens
+        $abbrs = ['Fe' => 'FE', 'Ip' => 'IP', 'Url' => 'URL', 'Id' => 'ID', 'Sku' => 'SKU', 'Imei' => 'IMEI'];
+        foreach ($abbrs as $needle => $upper) {
+            $base = preg_replace('/\b' . preg_quote($needle, '/') . '\b/u', $upper, $base);
+        }
+        return trim($base);
     }
 }
