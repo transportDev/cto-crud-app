@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Services\Dynamic\DynamicSchemaService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -93,6 +95,23 @@ class TableBuilderService
                 $table->softDeletes();
             }
         });
+
+        // Bust schema cache for the new table so UI reflects columns immediately
+        try {
+            app(DynamicSchemaService::class)->invalidateTableCache($definition['table']);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
+        // Also refresh the whitelist so the new table appears in pickers immediately
+        Cache::forget('cto:tables:whitelist');
+
+        // Auto-populate meta (PK/label) for this table
+        try {
+            app(DynamicSchemaService::class)->populateMetaForTable($definition['table']);
+        } catch (\Throwable $e) {
+            // No-op: avoid breaking creation if meta table/migrations not ready
+        }
 
         // Persist metadata if metadata table exists (after successful table creation)
         if (Schema::hasTable('dynamic_tables')) {

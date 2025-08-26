@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Services\Dynamic\DynamicSchemaService;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -175,6 +176,15 @@ PHP;
             }
         }
 
+        // Invalidate schema cache and repopulate meta so UI reflects changes immediately
+        try {
+            $schemaSvc = app(DynamicSchemaService::class);
+            $schemaSvc->invalidateTableCache($table);
+            $schemaSvc->populateMetaForTable($table);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
         return [
             'success' => empty($errors),
             'applied' => $applied,
@@ -271,6 +281,13 @@ PHP;
                         $foreign->onDelete($relation['on_delete']);
                     }
                 });
+                // Best-effort: invalidate cache for both tables (source + referenced)
+                try {
+                    $schemaSvc = app(DynamicSchemaService::class);
+                    $schemaSvc->invalidateTableCache($table);
+                    $schemaSvc->invalidateTableCache($refTable);
+                } catch (\Throwable $_) {
+                }
             } catch (\Throwable $e) {
                 // Compensating action: drop the newly created column if FK creation failed
                 if ($createdColumn) {
