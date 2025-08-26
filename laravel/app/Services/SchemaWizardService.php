@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\CtoTableMeta;
 use App\Services\Dynamic\DynamicSchemaService;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Artisan;
@@ -170,6 +171,38 @@ PHP;
                 } else { // relation
                     $this->addRelationDirectly($table, $i);
                     $applied[] = "Added/verified foreign key '{$i['name']}' on table '{$table}'";
+
+                    // Persist label columns (preferred) and search column for the referenced table
+                    $refTable = $i['references_table'] ?? null;
+                    if ($refTable) {
+                        try {
+                            $payload = [];
+                            // Prefer storing explicit columns; generate template only for backward-compat reads
+                            $labelCols = $i['label_columns'] ?? [];
+                            if (is_array($labelCols) && !empty($labelCols)) {
+                                $payload['display_template'] = [
+                                    'template' => implode(' - ', array_map(fn($c) => '{{' . $c . '}}', $labelCols)),
+                                    'columns' => array_values($labelCols),
+                                ];
+                            }
+
+                            if (!empty($i['search_column'])) {
+                                $payload['search_column'] = (string) $i['search_column'];
+                            } elseif (!empty($payload['display_template']['columns'])) {
+                                // default search column to first label column
+                                $payload['search_column'] = (string) ($payload['display_template']['columns'][0] ?? null);
+                            }
+
+                            if (!empty($payload)) {
+                                CtoTableMeta::query()->updateOrCreate(
+                                    ['table_name' => $refTable],
+                                    $payload
+                                );
+                            }
+                        } catch (\Throwable $_e) {
+                            // Non-fatal: metadata persistence errors should not block schema apply
+                        }
+                    }
                 }
             } catch (\Throwable $e) {
                 $errors[] = "Failed to apply '{$i['name']}': " . $e->getMessage();

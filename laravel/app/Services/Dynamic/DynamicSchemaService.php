@@ -196,7 +196,21 @@ class DynamicSchemaService
             } catch (\Throwable $e) {
                 // Safe no-op if table doesn't exist yet or on early bootstrap
             }
-            // 1) Prefer common human-readable columns
+            // 1) Prefer display_template columns if defined, fall back to label_column
+            try {
+                $meta2 = CtoTableMeta::query()->where('table_name', $table)->first();
+                if ($meta2 && is_array($meta2->display_template) && !empty($meta2->display_template['columns'])) {
+                    foreach ((array)$meta2->display_template['columns'] as $c) {
+                        if ($c && Schema::hasColumn($table, $c)) return (string)$c;
+                    }
+                }
+                if ($meta2 && $meta2->label_column && Schema::hasColumn($table, $meta2->label_column)) {
+                    return $meta2->label_column;
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+            // 2) Prefer common human-readable columns
             $preferred = [
                 'name',
                 'title',
@@ -216,7 +230,7 @@ class DynamicSchemaService
                 if (Schema::hasColumn($table, $col)) return $col;
             }
 
-            // 2) Otherwise, pick the first text-like column
+            // 3) Otherwise, pick the first text-like column
             $colsMeta = $this->columns($table);
             foreach ($colsMeta as $name => $meta) {
                 $type = strtolower((string)($meta['type'] ?? ''));
@@ -225,7 +239,7 @@ class DynamicSchemaService
                 }
             }
 
-            // 3) Fallback to primary key if nothing else fits, but only 'id' if it exists
+            // 4) Fallback to primary key if nothing else fits, but only 'id' if it exists
             $pk = $this->primaryKey($table);
             if ($pk && Schema::hasColumn($table, $pk)) return $pk;
             return Schema::hasColumn($table, 'id') ? 'id' : (Schema::getColumnListing($table)[0] ?? 'id');
@@ -258,6 +272,22 @@ class DynamicSchemaService
         if (Schema::hasColumn($table, $label)) return $label;
         $pk = $this->primaryKey($table);
         return Schema::hasColumn($table, $pk) ? $pk : (Schema::getColumnListing($table)[0] ?? 'id');
+    }
+
+    /**
+     * Render a label from a display template using the provided row array.
+     * Unknown placeholders are removed. Nulls become empty strings.
+     */
+    public function renderTemplateLabel(?array $template, array $row): ?string
+    {
+        if (!$template || empty($template['template'])) return null;
+        $s = (string) $template['template'];
+        foreach ($row as $k => $v) {
+            $s = str_replace('{{' . $k . '}}', (string)($v ?? ''), $s);
+            $s = str_replace('{{ ' . $k . ' }}', (string)($v ?? ''), $s);
+        }
+        $s = preg_replace('/{{[^}]+}}/', '', $s);
+        return trim((string)$s);
     }
 
     /** Quick index existence check (MySQL/MariaDB only), cached. */

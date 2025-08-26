@@ -2,10 +2,13 @@
 
 namespace App\Services\Dynamic;
 
+use App\Models\CtoTableMeta;
 use Filament\Forms;
+use Filament\Forms\Components\Actions\Action as FormAction;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Support\Arr;
 
 /**
  * DynamicFormService
@@ -60,7 +63,7 @@ class DynamicFormService
                 default => Forms\Components\TextInput::make($name)->maxLength($length ?: 65535),
             };
 
-            // FK async select when column looks like *_id and is not PK
+            // FK handling when column looks like *_id and is not PK
             if ($this->looksLikeForeignKey($table, $name)) {
                 $fkMap = $this->schema->foreignKeys($table);
                 $refTable = $fkMap[$name]['referenced_table'] ?? Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
@@ -71,21 +74,117 @@ class DynamicFormService
                     if (!Schema::hasColumn($refTable, $refPk)) {
                         $refPk = $this->schema->primaryKey($refTable);
                     }
-                    $label = $this->schema->bestSearchColumn($refTable);
+                    // Resolve label strategy
+                    $meta = null;
+                    $displayTemplate = null;
+                    $searchCol = null;
+                    $labelCol = null;
+                    $labelCols = [];
+                    try {
+                        $meta = CtoTableMeta::query()->where('table_name', $refTable)->first();
+                        if ($meta) {
+                            $displayTemplate = is_array($meta->display_template) ? $meta->display_template : null;
+                            $labelCols = isset($displayTemplate['columns']) && is_array($displayTemplate['columns']) ? $displayTemplate['columns'] : [];
+                            $searchCol = $meta->search_column ?: null;
+                            $labelCol = $meta->label_column ?: null;
+                        }
+                    } catch (\Throwable $e) { /* ignore */
+                    }
+                    // If creating, embed inputs instead of showing raw FK
+                    if (!$isEdit) {
+                        $cols = !empty($labelCols) ? $labelCols : array_filter([$labelCol ?: $this->schema->guessLabelColumn($refTable)]);
+                        $groupFields = [];
+                        foreach ($cols as $c) {
+                            if (!Schema::hasColumn($refTable, $c)) continue;
+                            $groupFields[] = Forms\Components\TextInput::make('fk_new__' . $name . '__' . $refTable . '__' . $c)
+                                ->label(Str::headline($c))
+                                ->required(!$nullable && !$forView)
+                                ->disabled($forView)
+                                ->dehydrated(true);
+                        }
+                        if (!empty($groupFields)) {
+                            $components[] = Forms\Components\Fieldset::make(Str::headline($refTable))
+                                ->schema($groupFields)
+                                ->columns(min(2, count($groupFields)));
+                            continue; // skip default FK component
+                        }
+                    }
+                    // Default: searchable select with inline create
+                    // Determine display column fallback (label_column -> guessLabelColumn -> pk)
+                    $displayCol = $labelCol && Schema::hasColumn($refTable, $labelCol) ? $labelCol : ($this->schema->guessLabelColumn($refTable) ?: $this->schema->primaryKey($refTable));
+                    // Determine search column
+                    $search = $searchCol && Schema::hasColumn($refTable, $searchCol) ? $searchCol : $this->schema->bestSearchColumn($refTable);
                     $component = Forms\Components\Select::make($name)
                         ->searchable()
-                        ->getSearchResultsUsing(function (string $search) use ($refTable, $label, $refPk) {
-                            return DB::table($refTable)
-                                ->where($label, 'like', "%{$search}%")
-                                ->orderBy($label)
-                                ->limit((int)config('cto.fk_search_limit', 50))
-                                ->pluck($label, $refPk);
+                        ->getSearchResultsUsing(function (string $searchTerm) use ($refTable, $search, $displayCol, $refPk, $displayTemplate, $labelCols) {
+                            $limit = (int)config('cto.fk_search_limit', 50);
+                            if (!empty($labelCols)) {
+                                $cols = array_unique(array_merge([$refPk], (array)$labelCols));
+                                $query = DB::table($refTable)->select($cols);
+                                if (Schema::hasColumn($refTable, $search)) {
+                                    $query->where($search, 'like', "%{$searchTerm}%");
+                                }
+                                $rows = $query->limit($limit)->get();
+                                $out = [];
+                                foreach ($rows as $r) {
+                                    $rowArr = (array)$r;
+                                    $rendered = null;
+                                    if ($displayTemplate && !empty($displayTemplate['template'])) {
+                                        $rendered = app(DynamicSchemaService::class)->renderTemplateLabel($displayTemplate, $rowArr);
+                                    }
+                                    if ($rendered === null || $rendered === '') {
+                                        $vals = [];
+                                        foreach ($labelCols as $c) {
+                                            $vals[] = (string)($rowArr[$c] ?? '');
+                                        }
+                                        $rendered = trim(implode(' - ', $vals));
+                                    }
+                                    if ($rendered === '') {
+                                        $rendered = ($rowArr[$displayCol] ?? $rowArr[$refPk] ?? null);
+                                    }
+                                    if ($rendered !== null) {
+                                        $out[$rowArr[$refPk]] = $rendered;
+                                    }
+                                }
+                                return $out;
+                            }
+                            $q = DB::table($refTable);
+                            if (Schema::hasColumn($refTable, $search)) {
+                                $q->where($search, 'like', "%{$searchTerm}%");
+                            }
+                            if (Schema::hasColumn($refTable, $displayCol)) {
+                                $q->orderBy($displayCol);
+                                return $q->limit($limit)->pluck($displayCol, $refPk);
+                            }
+                            return $q->limit($limit)->pluck($refPk, $refPk);
                         })
-                        ->getOptionLabelUsing(function ($value) use ($refTable, $label, $refPk) {
+                        ->getOptionLabelUsing(function ($value) use ($refTable, $displayCol, $search, $refPk, $displayTemplate, $labelCols) {
                             if ($value === null || $value === '') return null;
-                            return DB::table($refTable)->where($refPk, $value)->value($label);
+                            if (!empty($labelCols)) {
+                                $cols = array_unique(array_merge([$refPk], (array)$labelCols));
+                                $row = DB::table($refTable)->select($cols)->where($refPk, $value)->first();
+                                if ($row) {
+                                    $rowArr = (array)$row;
+                                    $labelStr = null;
+                                    if ($displayTemplate && !empty($displayTemplate['template'])) {
+                                        $labelStr = app(DynamicSchemaService::class)->renderTemplateLabel($displayTemplate, $rowArr);
+                                    }
+                                    if ($labelStr === null || $labelStr === '') {
+                                        $vals = [];
+                                        foreach ($labelCols as $c) {
+                                            $vals[] = (string)($rowArr[$c] ?? '');
+                                        }
+                                        $labelStr = trim(implode(' - ', $vals));
+                                    }
+                                    if ($labelStr !== '') return $labelStr;
+                                }
+                            }
+                            if (Schema::hasColumn($refTable, $displayCol)) {
+                                return DB::table($refTable)->where($refPk, $value)->value($displayCol);
+                            }
+                            return (string) $value;
                         })
-                        ->helperText("Referensi {$refTable}.{$label}");
+                        ->helperText("Sumber: {$refTable}." . (Schema::hasColumn($refTable, $displayCol) ? $displayCol : $refPk) . " — Ketik untuk mencari, pilih salah satu.");
                 }
             }
 
@@ -136,8 +235,33 @@ class DynamicFormService
                     if (!Schema::hasColumn($refTable, $refPk)) {
                         $refPk = $this->schema->primaryKey($refTable);
                     }
-                    if (Schema::hasColumn($refTable, $refPk)) {
-                        $colRules[] = 'exists:' . $refTable . ',' . $refPk;
+                    // If creating and using embedded FK fields (label columns), do not require/exists on FK itself
+                    if (!$isEdit) {
+                        try {
+                            $metaCfg = CtoTableMeta::query()->where('table_name', $refTable)->first();
+                            $display = is_array($metaCfg->display_template ?? null) ? $metaCfg->display_template : null;
+                            $labelCols = isset($display['columns']) && is_array($display['columns']) ? $display['columns'] : [];
+                            if (!empty($labelCols)) {
+                                // Relax FK rule, it'll be set after validation from embedded fields
+                                $colRules = ['nullable'];
+                                // Add simple rules for each embedded field
+                                foreach ($labelCols as $lc) {
+                                    $rules['fk_new__' . $name . '__' . $refTable . '__' . $lc] = ['required'];
+                                }
+                            } else {
+                                if (Schema::hasColumn($refTable, $refPk)) {
+                                    $colRules[] = 'exists:' . $refTable . ',' . $refPk;
+                                }
+                            }
+                        } catch (\Throwable $e) {
+                            if (Schema::hasColumn($refTable, $refPk)) {
+                                $colRules[] = 'exists:' . $refTable . ',' . $refPk;
+                            }
+                        }
+                    } else {
+                        if (Schema::hasColumn($refTable, $refPk)) {
+                            $colRules[] = 'exists:' . $refTable . ',' . $refPk;
+                        }
                     }
                 }
             }

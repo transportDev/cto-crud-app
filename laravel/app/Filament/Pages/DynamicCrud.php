@@ -309,6 +309,9 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         $rules = $this->buildValidationRules(false);
                         Validator::make($data, $rules)->validate();
 
+                        // Resolve any embedded FK fields (from relation label columns) into actual FK IDs
+                        $this->resolveEmbeddedForeigns($data);
+
                         $model = new DynamicModel();
                         $model->setRuntimeTable($this->selectedTable);
 
@@ -362,6 +365,9 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         // Validate against schema (cached)
                         $rules = $this->buildValidationRules(true);
                         Validator::make($data, $rules)->validate();
+
+                        // No embedded creation on edit; ignore any stray embedded keys
+                        $this->stripEmbeddedForeigns($data);
 
                         $this->applySafeDefaults($data, true);
 
@@ -602,6 +608,72 @@ class DynamicCrud extends Page implements HasTable, HasForms
             if (\Illuminate\Support\Facades\Schema::hasColumn($this->selectedTable, 'updated_at')) {
                 $data['updated_at'] = now();
             }
+        }
+    }
+
+    /**
+     * Convert embedded FK label fields into real FK IDs on create. Keys look like
+     * fk_new__{fk_col}__{ref_table}__{label_col}. We attempt to find an existing
+     * row by all label columns; if not found, we insert a new row and set the FK.
+     */
+    protected function resolveEmbeddedForeigns(array &$data): void
+    {
+        $fks = app(DynamicSchemaService::class)->foreignKeys($this->selectedTable);
+        foreach ($fks as $fkCol => $ref) {
+            $refTable = $ref['referenced_table'] ?? null;
+            $refPk = $ref['referenced_column'] ?? 'id';
+            if (!$refTable) continue;
+
+            // Collect embedded fields
+            $prefix = 'fk_new__' . $fkCol . '__' . $refTable . '__';
+            $labelFields = [];
+            foreach ($data as $k => $v) {
+                if (str_starts_with($k, $prefix)) {
+                    $labelCol = substr($k, strlen($prefix));
+                    $labelFields[$labelCol] = $v;
+                }
+            }
+            if (empty($labelFields)) continue;
+
+            // Try to locate existing row by exact match on provided label columns
+            $q = DB::table($refTable);
+            foreach ($labelFields as $col => $val) {
+                if (Schema::hasColumn($refTable, $col)) {
+                    $q->where($col, $val);
+                }
+            }
+            $existing = $q->select($refPk)->first();
+            if ($existing && isset($existing->{$refPk})) {
+                $data[$fkCol] = $existing->{$refPk};
+            } else {
+                // Insert and set FK
+                $isAuto = app(DynamicSchemaService::class)->isPrimaryAutoIncrement($refTable);
+                if (!$isAuto && !isset($labelFields[$refPk]) && Schema::hasColumn($refTable, $refPk)) {
+                    // Cannot infer PK; skip creating
+                    continue;
+                }
+                $payload = $labelFields;
+                if ($isAuto) {
+                    unset($payload[$refPk]);
+                    $newId = DB::table($refTable)->insertGetId($payload);
+                    $data[$fkCol] = $newId;
+                } else {
+                    DB::table($refTable)->insert($payload);
+                    $data[$fkCol] = $payload[$refPk];
+                }
+            }
+
+            // Cleanup embedded fields from payload
+            foreach (array_keys($labelFields) as $c) {
+                unset($data[$prefix . $c]);
+            }
+        }
+    }
+
+    protected function stripEmbeddedForeigns(array &$data): void
+    {
+        foreach (array_keys($data) as $k) {
+            if (str_starts_with($k, 'fk_new__')) unset($data[$k]);
         }
     }
 
