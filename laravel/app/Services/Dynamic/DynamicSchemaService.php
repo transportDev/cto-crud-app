@@ -275,6 +275,178 @@ class DynamicSchemaService
     }
 
     /**
+     * Return an ordered list of label columns to compose a human-readable label.
+     * Priority:
+     * - cto_table_meta.display_template.columns
+     * - Special-case tables (e.g., regional_lookup)
+     * - Obvious candidates (*_name, name, title, code)
+     * - Fallback to the detected label column
+     */
+    public function labelColumns(string $table): array
+    {
+        $table = $this->sanitizeTable($table);
+        if (!$table) return [];
+
+        // 1) Metadata-defined composite columns
+        try {
+            $meta = CtoTableMeta::query()->where('table_name', $table)->first();
+            if ($meta && is_array($meta->display_template) && !empty($meta->display_template['columns'])) {
+                $cols = (array) $meta->display_template['columns'];
+                return array_values(array_filter($cols, fn($c) => $c && Schema::hasColumn($table, $c)));
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
+        // 2) Special-case known tables
+        if ($table === 'regional_lookup') {
+            $candidates = ['regional_name', 'tsel_reg', 'tlk_reg', 'island'];
+            return array_values(array_filter($candidates, fn($c) => Schema::hasColumn($table, $c)));
+        }
+
+        // 3) Obvious candidates: *_name, name, title, code
+        $listing = Schema::getColumnListing($table);
+        $nameLike = array_values(array_filter($listing, fn($c) => str_ends_with($c, '_name')));
+        if (!empty($nameLike)) return $nameLike;
+        foreach (['name', 'title', 'code', 'label'] as $c) {
+            if (Schema::hasColumn($table, $c)) return [$c];
+        }
+
+        // 4) Fallback: use preferred label column heuristic
+        $fallback = $this->guessLabelColumn($table);
+        return $fallback ? [$fallback] : [];
+    }
+
+    /**
+     * Compose a human-friendly label for a row of a given table using metadata/template
+     * and sensible fallbacks. Accepts a row as associative array (column => value).
+     */
+    public function composeLabel(string $table, array $row): string
+    {
+        $table = $this->sanitizeTable($table);
+        if (!$table) return '';
+
+        // Prefer explicit template from metadata if available
+        try {
+            $meta = CtoTableMeta::query()->where('table_name', $table)->first();
+            if ($meta && is_array($meta->display_template) && !empty($meta->display_template['template'])) {
+                $rendered = $this->renderTemplateLabel($meta->display_template, $row);
+                if ($rendered !== null && $rendered !== '') return $rendered;
+            }
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
+        // Special-case: regional_lookup => "regional_name - tsel_reg - island"
+        if ($table === 'regional_lookup') {
+            $parts = [];
+            foreach (['regional_name', 'tsel_reg', 'tlk_reg', 'island'] as $c) {
+                $parts[] = (string)($row[$c] ?? '');
+            }
+            $s = trim(implode(' - ', array_filter($parts, fn($v) => $v !== '')));
+            if ($s !== '') return $s;
+        }
+
+        // Otherwise, join labelColumns with " - "
+        $cols = $this->labelColumns($table);
+        if (!empty($cols)) {
+            $vals = [];
+            foreach ($cols as $c) {
+                $vals[] = (string)($row[$c] ?? '');
+            }
+            $s = trim(implode(' - ', array_filter($vals, fn($v) => $v !== '')));
+            if ($s !== '') return $s;
+        }
+
+        // Fallback to label column or primary key
+        $labelCol = $this->guessLabelColumn($table);
+        if ($labelCol && isset($row[$labelCol])) return (string) $row[$labelCol];
+        $pk = $this->primaryKey($table);
+        return isset($row[$pk]) ? (string)$row[$pk] : '';
+    }
+
+    /**
+     * List VARCHAR/CHAR/TEXT-like columns for a table (excluding PK), useful for inline create forms.
+     */
+    public function varcharTextColumns(string $table): array
+    {
+        $table = $this->sanitizeTable($table);
+        if (!$table) return [];
+        $pk = $this->primaryKey($table);
+        $colsMeta = $this->columns($table);
+        $out = [];
+        foreach ($colsMeta as $name => $meta) {
+            if ($name === $pk) continue;
+            $type = strtolower((string)($meta['type'] ?? ''));
+            if (in_array($type, ['string', 'varchar', 'char', 'text', 'mediumtext', 'longtext'], true)) {
+                $out[] = $name;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Return enum/set options for a column (MySQL/MariaDB only). Empty array if not enum/set or unavailable.
+     */
+    public function enumOptions(string $table, string $column): array
+    {
+        $table = $this->sanitizeTable($table);
+        if (!$table) return [];
+        $key = 'cto:schema:enum:' . DB::getDatabaseName() . ':' . $table . ':' . $column;
+        return Cache::remember($key, $this->cacheTtl(), function () use ($table, $column) {
+            $driver = DB::connection()->getDriverName();
+            if (!in_array($driver, ['mysql', 'mariadb'], true)) return [];
+            $db = DB::getDatabaseName();
+            $row = DB::selectOne(
+                'SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
+                [$db, $table, $column]
+            );
+            $type = (string) ($row->COLUMN_TYPE ?? '');
+            if (!str_starts_with($type, 'enum(') && !str_starts_with($type, 'set(')) {
+                return [];
+            }
+            // Parse enum('a','b','c') or set('a','b') -> ['a','b','c']
+            $m = [];
+            if (!preg_match("/^(enum|set)\((.*)\)$/i", $type, $m)) return [];
+            $inner = $m[2] ?? '';
+            // Split by comma, taking into account quoted strings
+            $vals = [];
+            $current = '';
+            $inQuote = false;
+            $len = strlen($inner);
+            for ($i = 0; $i < $len; $i++) {
+                $ch = $inner[$i];
+                if ($ch === "'") {
+                    // Toggle quote or handle escaped quote
+                    if ($inQuote && ($i + 1 < $len) && $inner[$i + 1] === "'") {
+                        $current .= "'"; // escaped quote
+                        $i++;
+                    } else {
+                        $inQuote = !$inQuote;
+                    }
+                } elseif ($ch === ',' && !$inQuote) {
+                    $vals[] = $current;
+                    $current = '';
+                } else {
+                    $current .= $ch;
+                }
+            }
+            if ($current !== '') $vals[] = $current;
+            $vals = array_map(fn($v) => trim($v, "' \t\n\r\0\x0B"), $vals);
+            return array_values(array_filter($vals, fn($v) => $v !== ''));
+        });
+    }
+
+    /** Check if a given column on a table is a foreign key column. */
+    public function isForeignKeyColumn(string $table, string $column): bool
+    {
+        $table = $this->sanitizeTable($table);
+        if (!$table) return false;
+        $fks = $this->foreignKeys($table);
+        return array_key_exists($column, $fks);
+    }
+
+    /**
      * Render a label from a display template using the provided row array.
      * Unknown placeholders are removed. Nulls become empty strings.
      */

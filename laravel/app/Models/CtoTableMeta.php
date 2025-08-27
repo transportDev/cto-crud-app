@@ -22,4 +22,15 @@ class CtoTableMeta extends Model
     protected $casts = [
         'display_template' => 'array',
     ];
+
+    /**
+     * Convenience: return array of columns from display_template[columns].
+     */
+    public function displayColumns(): array
+    {
+        $tpl = $this->display_template;
+        if (!is_array($tpl)) return [];
+        $cols = $tpl['columns'] ?? [];
+        return is_array($cols) ? array_values(array_filter($cols)) : [];
+    }
 }

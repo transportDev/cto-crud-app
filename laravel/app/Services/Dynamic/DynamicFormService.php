@@ -5,6 +5,7 @@ namespace App\Services\Dynamic;
 use App\Models\CtoTableMeta;
 use Filament\Forms;
 use Filament\Forms\Components\Actions\Action as FormAction;
+use Filament\Forms\Components\Select;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -74,58 +75,198 @@ class DynamicFormService
                     if (!Schema::hasColumn($refTable, $refPk)) {
                         $refPk = $this->schema->primaryKey($refTable);
                     }
-                    // Resolve label strategy
+
+                    // Resolve template/columns/search from metadata and fallbacks
                     $meta = null;
                     $displayTemplate = null;
                     $searchCol = null;
                     $labelCol = null;
-                    $labelCols = [];
                     try {
-                        $meta = CtoTableMeta::where('table_name', $refTable)->first();
-                        $displayTemplate = $meta?->display_template;
-                        $searchCol = $meta?->search_column;
-                        $labelCol = $meta?->label_column ?? $this->schema->guessLabelColumn($refTable);
-                        if ($displayTemplate && !empty($displayTemplate['columns'])) {
-                            $labelCols = $displayTemplate['columns'];
+                        $meta = CtoTableMeta::query()->where('table_name', $refTable)->first();
+                        if ($meta) {
+                            $displayTemplate = is_array($meta->display_template) ? $meta->display_template : null;
+                            $searchCol = $meta->search_column ?: null;
+                            $labelCol = $meta->label_column ?: null;
                         }
-                    } catch (\Throwable $e) { /* ignore */
+                    } catch (\Throwable $e) {
                     }
 
-                    // Embedded form for creating new FK record
-                    if (!empty($labelCols)) {
-                        $embeddedInputs = [];
-                        foreach ($labelCols as $c) {
-                            $cMeta = $this->schema->columns($refTable)[$c] ?? null;
-                            if (!$cMeta) continue;
-                            
-                            $inputKey = 'fk_new__' . $name . '__' . $refTable . '__' . $c;
+                    $compositeCols = $this->schema->labelColumns($refTable);
+                    $displayCol = $labelCol && Schema::hasColumn($refTable, $labelCol)
+                        ? $labelCol
+                        : ($this->schema->guessLabelColumn($refTable) ?: $this->schema->primaryKey($refTable));
+                    $searchColumn = $searchCol && Schema::hasColumn($refTable, $searchCol)
+                        ? $searchCol
+                        : $this->schema->bestSearchColumn($refTable);
 
-                            // Each field from the related table becomes a searchable, creatable select
-                            $input = Forms\Components\Select::make($inputKey)
-                                ->label(Str::headline($c))
-                                ->options(function() use ($refTable, $c) {
-                                    // Provide existing distinct values for this column as options
-                                    return DB::table($refTable)->distinct()->pluck($c, $c);
-                                })
-                                ->searchable()
-                                ->createOptionForm([
-                                    Forms\Components\TextInput::make('value')->label('New Value')->required(),
-                                ])
-                                ->createOptionUsing(fn (array $data) => $data['value']);
+                    // Determine if the FK column is integer or string type
+                    $isIntegerType = in_array($type, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true);
 
-                            $embeddedInputs[] = $input;
+                    // Build Filament Select with search and preload
+                    $component = Select::make($name)
+                        ->label($this->humanizeFkLabel($name))
+                        ->searchable()
+                        ->preload()
+                        ->options(function () use ($refTable, $refPk, $displayCol, $compositeCols, $isIntegerType) {
+                            $limit = (int) config('cto.fk_search_limit', 50);
+                            $cols = array_unique(array_merge([$refPk], $compositeCols ?: [$displayCol]));
+                            $q = DB::table($refTable)->select($cols);
+                            if (Schema::hasColumn($refTable, $displayCol)) {
+                                $q->orderBy($displayCol);
+                            }
+                            $rows = $q->limit($limit)->get();
+                            $out = [];
+                            foreach ($rows as $r) {
+                                $rowArr = (array) $r;
+                                // Ensure the key matches the expected type
+                                $key = $rowArr[$refPk];
+                                if ($isIntegerType && is_numeric($key)) {
+                                    $key = (int) $key;
+                                }
+                                $out[$key] = app(DynamicSchemaService::class)->composeLabel($refTable, $rowArr);
+                            }
+                            return $out;
+                        })
+                        ->getSearchResultsUsing(function (string $search) use ($refTable, $refPk, $displayCol, $searchColumn, $compositeCols, $isIntegerType) {
+                            $limit = (int) config('cto.fk_search_limit', 50);
+                            $cols = array_unique(array_merge([$refPk], $compositeCols ?: [$displayCol]));
+                            $q = DB::table($refTable)->select($cols);
+                            if ($search !== '' && Schema::hasColumn($refTable, $searchColumn)) {
+                                $q->where($searchColumn, 'like', "%{$search}%");
+                            }
+                            $rows = $q->limit($limit)->get();
+                            $out = [];
+                            foreach ($rows as $r) {
+                                $rowArr = (array) $r;
+                                // Ensure the key matches the expected type
+                                $key = $rowArr[$refPk];
+                                if ($isIntegerType && is_numeric($key)) {
+                                    $key = (int) $key;
+                                }
+                                $out[$key] = app(DynamicSchemaService::class)->composeLabel($refTable, $rowArr);
+                            }
+                            return $out;
+                        })
+                        ->getOptionLabelUsing(function ($value) use ($refTable, $refPk, $isIntegerType) {
+                            if ($value === null || $value === '') return null;
+                            // Ensure we query with the correct type
+                            if ($isIntegerType && is_numeric($value)) {
+                                $value = (int) $value;
+                            }
+                            $row = DB::table($refTable)->where($refPk, $value)->first();
+                            return $row ? app(DynamicSchemaService::class)->composeLabel($refTable, (array)$row) : (string) $value;
+                        })
+                        // Ensure the state is properly formatted when loaded
+                        ->afterStateHydrated(function (Select $component, $state) use ($isIntegerType) {
+                            if ($state !== null && $state !== '') {
+                                if ($isIntegerType && is_numeric($state)) {
+                                    $component->state((int) $state);
+                                } else {
+                                    $component->state((string) $state);
+                                }
+                            }
+                        })
+                        // Ensure proper type casting before saving
+                        ->beforeStateDehydrated(function (Select $component, $state) use ($isIntegerType) {
+                            if ($state !== null && $state !== '') {
+                                if ($isIntegerType && is_numeric($state)) {
+                                    $component->state((int) $state);
+                                } else {
+                                    $component->state((string) $state);
+                                }
+                            }
+                        });
+
+                    // Inline create support (admin-only)
+                    $component->createOptionForm(function () use ($refTable) {
+                        $pk = $this->schema->primaryKey($refTable);
+                        $colsMeta = $this->schema->columns($refTable);
+                        $schema = [];
+                        foreach ($colsMeta as $colName => $colMeta) {
+                            if ($colName === $pk) continue; // skip PK
+                            if ($this->schema->isForeignKeyColumn($refTable, $colName)) continue; // skip FK to avoid recursion
+                            if (in_array($colName, ['created_at', 'updated_at', 'deleted_at'], true)) continue; // skip system columns
+
+                            $ctype = strtolower((string)($colMeta['type'] ?? 'string'));
+                            $nullable = (bool)($colMeta['nullable'] ?? false);
+                            $length = $colMeta['length'] ?? null;
+
+                            $field = null;
+                            if (in_array($ctype, ['string', 'varchar', 'char', 'text', 'mediumtext', 'longtext'])) {
+                                // Textual
+                                if (in_array($ctype, ['text', 'mediumtext', 'longtext'])) {
+                                    $field = Forms\Components\Textarea::make($colName)->rows(3);
+                                } else {
+                                    $field = Forms\Components\TextInput::make($colName)->maxLength($length ?: 65535);
+                                }
+                            } elseif (in_array($ctype, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint', 'decimal', 'float', 'double'])) {
+                                $field = Forms\Components\TextInput::make($colName)->numeric();
+                            } elseif (in_array($ctype, ['date'])) {
+                                $field = Forms\Components\DatePicker::make($colName)->native(false);
+                            } elseif (in_array($ctype, ['datetime', 'datetimetz', 'timestamp', 'time'])) {
+                                $field = Forms\Components\DateTimePicker::make($colName)->native(false);
+                            } elseif (in_array($ctype, ['boolean'])) {
+                                $field = Forms\Components\Toggle::make($colName);
+                            } elseif (in_array($ctype, ['enum', 'set'])) {
+                                $opts = $this->schema->enumOptions($refTable, $colName);
+                                $field = Forms\Components\Select::make($colName)
+                                    ->options(array_combine($opts, $opts))
+                                    ->multiple($ctype === 'set')
+                                    ->searchable();
+                            } else {
+                                $field = Forms\Components\TextInput::make($colName);
+                            }
+
+                            $field->label(Str::headline($colName));
+                            if (!$nullable) $field->required();
+                            $schema[] = $field;
                         }
-                        $components[] = Forms\Components\Fieldset::make($this->humanizeFkLabel($name))
-                            ->schema($embeddedInputs)
-                            ->columns(count($embeddedInputs) > 1 ? 2 : 1);
-                        continue; // Skip default component creation at the end
-                    }
+
+                        // Ensure at least one field when metadata is minimal
+                        if (empty($schema)) {
+                            $labelCol = $this->schema->guessLabelColumn($refTable);
+                            if ($labelCol && $labelCol !== $pk) {
+                                $schema[] = Forms\Components\TextInput::make($labelCol)
+                                    ->label(Str::headline($labelCol))
+                                    ->required();
+                            }
+                        }
+
+                        return $schema;
+                    });
+
+                    // Admin-only visibility for inline create button
+                    $component->createOptionAction(function (FormAction $action) {
+                        $action->visible(function () {
+                            $u = \Illuminate\Support\Facades\Auth::user();
+                            if ($u instanceof \App\Models\User && method_exists($u, 'hasRole')) {
+                                return $u->hasRole('admin');
+                            }
+                            return false;
+                        });
+                        return $action;
+                    });
+
+                    // Auto-select the newly created record
+                    $component->createOptionUsing(function (array $data) use ($refTable, $refPk) {
+                        // Insert and return PK
+                        $isAuto = app(DynamicSchemaService::class)->isPrimaryAutoIncrement($refTable);
+                        if ($isAuto) {
+                            $id = DB::table($refTable)->insertGetId($data);
+                            return $id;
+                        }
+                        DB::table($refTable)->insert($data);
+                        return $data[$refPk] ?? null;
+                    });
+
+                    // Helper text for user
+                    $component->helperText("Pilih atau cari dari tabel {$refTable}. Admin dapat menambah data baru.");
                 }
             }
 
             // Prefer humanized FK label for *_id columns, otherwise default to column name
             if ($this->looksLikeForeignKey($table, $name)) {
-                $component->label($this->humanizeFkLabel($name));
+                // label already set above for FK select
             } else {
                 $component->label(Str::headline($name));
             }
@@ -146,6 +287,7 @@ class DynamicFormService
         $pk = $this->schema->primaryKey($table);
         $fks = $this->schema->foreignKeys($table);
         $rules = [];
+
         foreach ($cols as $name => $meta) {
             if (in_array($name, ['created_at', 'updated_at', 'deleted_at'], true)) continue;
             // On edit, never validate PK (it's disabled & not dehydrated in the form)
@@ -158,55 +300,43 @@ class DynamicFormService
 
             $colRules = [];
             $colRules[] = $nullable ? 'nullable' : 'required';
-            if (in_array($type, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true)) $colRules[] = 'integer';
-            elseif (in_array($type, ['decimal', 'float', 'double'], true)) $colRules[] = 'numeric';
-            elseif (in_array($type, ['date', 'time', 'datetime', 'datetimetz', 'timestamp'], true)) $colRules[] = 'date';
-            elseif (in_array($type, ['json'], true)) $colRules[] = 'array';
-            else {
+
+            // Apply type-based validation
+            if (in_array($type, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true)) {
+                $colRules[] = 'integer';
+            } elseif (in_array($type, ['decimal', 'float', 'double'], true)) {
+                $colRules[] = 'numeric';
+            } elseif (in_array($type, ['date', 'time', 'datetime', 'datetimetz', 'timestamp'], true)) {
+                $colRules[] = 'date';
+            } elseif (in_array($type, ['json'], true)) {
+                $colRules[] = 'array';
+            } else {
+                // Default to string for varchar, char, text, etc.
                 $colRules[] = 'string';
-                if ($length && is_int($length)) $colRules[] = 'max:' . $length;
+                if ($length && is_int($length)) {
+                    $colRules[] = 'max:' . $length;
+                }
             }
 
+            // If it's a foreign key, add exists validation
             if ($this->looksLikeForeignKey($table, $name)) {
                 $refTable = $fks[$name]['referenced_table'] ?? Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
                 $refTable = $this->schema->sanitizeTable($refTable);
                 $refPk = $fks[$name]['referenced_column'] ?? 'id';
+
                 if ($refTable && Schema::hasTable($refTable)) {
                     if (!Schema::hasColumn($refTable, $refPk)) {
                         $refPk = $this->schema->primaryKey($refTable);
                     }
-                    // If creating and using embedded FK fields (label columns), do not require/exists on FK itself
-                    if (!$isEdit) {
-                        try {
-                            $metaCfg = CtoTableMeta::query()->where('table_name', $refTable)->first();
-                            $display = is_array($metaCfg->display_template ?? null) ? $metaCfg->display_template : null;
-                            $labelCols = isset($display['columns']) && is_array($display['columns']) ? $display['columns'] : [];
-                            if (!empty($labelCols)) {
-                                // Relax FK rule, it'll be set after validation from embedded fields
-                                $colRules = ['nullable'];
-                                // Add simple rules for each embedded field
-                                foreach ($labelCols as $lc) {
-                                    $rules['fk_new__' . $name . '__' . $refTable . '__' . $lc] = ['required'];
-                                }
-                            } else {
-                                if (Schema::hasColumn($refTable, $refPk)) {
-                                    $colRules[] = 'exists:' . $refTable . ',' . $refPk;
-                                }
-                            }
-                        } catch (\Throwable $e) {
-                            if (Schema::hasColumn($refTable, $refPk)) {
-                                $colRules[] = 'exists:' . $refTable . ',' . $refPk;
-                            }
-                        }
-                    } else {
-                        if (Schema::hasColumn($refTable, $refPk)) {
-                            $colRules[] = 'exists:' . $refTable . ',' . $refPk;
-                        }
+                    if (Schema::hasColumn($refTable, $refPk)) {
+                        $colRules[] = 'exists:' . $refTable . ',' . $refPk;
                     }
                 }
             }
+
             $rules[$name] = $colRules;
         }
+
         return $rules;
     }
 
