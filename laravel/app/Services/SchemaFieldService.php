@@ -38,17 +38,17 @@ class SchemaFieldService
 
         // NOT NULL without default and existing rows -> risky
         if (!$col['nullable'] && ($col['default'] === null && $col['default_bool'] === null) && $rowCount > 0) {
-            $warnings[] = "New NOT NULL column without a default, table has {$rowCount} existing rows: writes will fail until backfilled.";
+            $warnings[] = "Kolom '{$col['name']}' diwajibkan (NOT NULL) tapi tidak punya nilai default. Ini akan menyebabkan error saat menyimpan data baru jika kolom ini tidak diisi. Pertimbangkan untuk memberikan nilai default atau mengizinkan NULL.";
         }
 
         // UNIQUE on new column with non-null default and many rows -> risky
         if (!empty($col['unique']) && !$col['nullable'] && $col['default'] !== null && $rowCount > 1) {
-            $warnings[] = 'UNIQUE with a non-null default can violate uniqueness on existing rows.';
+            $warnings[] = "Kolom '{$col['name']}' memiliki batasan unik (UNIQUE) dan nilai default. Jika ada lebih dari satu baris data, ini akan langsung menyebabkan error karena nilai default yang sama. Sebaiknya tambahkan kolom ini sebagai nullable, isi data unik untuk setiap baris, baru tambahkan batasan unik.";
         }
 
         // Foreign key basic warning (if type is foreignId)
         if (($col['type'] ?? null) === 'foreignId') {
-            $warnings[] = 'Adding FK constraints can lock large tables; consider adding the column first, backfilling, then adding the constraint.';
+            $warnings[] = "Menambah foreign key pada tabel besar bisa mengunci tabel untuk sementara. Pertimbangkan menambah kolom terlebih dahulu, mengisi datanya, baru menambahkan constraint foreign key.";
         }
 
         [$migration, $sql] = $this->buildPreviews($table, $col);

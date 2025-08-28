@@ -11,6 +11,52 @@ use Illuminate\Support\Str;
 
 class SchemaWizardService
 {
+    /**
+     * Normalize relation type selection to one of the supported types.
+     */
+    protected function resolveRelationType(?string $t): string
+    {
+        $t = (string)($t ?? 'bigInteger');
+        $allowed = ['bigInteger', 'integer', 'mediumInteger', 'smallInteger', 'tinyInteger'];
+        return in_array($t, $allowed, true) ? $t : 'bigInteger';
+    }
+
+    /**
+     * Build the PHP Blueprint expression for an unsigned integer FK column.
+     * Example: $table->unsignedBigInteger('user_id')->nullable()
+     */
+    protected function relationPhpColumn(string $name, string $relationType, bool $nullable): string
+    {
+        $method = match ($relationType) {
+            'bigInteger' => 'unsignedBigInteger',
+            'integer' => 'unsignedInteger',
+            'mediumInteger' => 'unsignedMediumInteger',
+            'smallInteger' => 'unsignedSmallInteger',
+            'tinyInteger' => 'unsignedTinyInteger',
+            default => 'unsignedBigInteger',
+        };
+        $expr = "\$table->{$method}('{$name}')";
+        if ($nullable) {
+            $expr .= '->nullable()';
+        }
+        return $expr;
+    }
+
+    /**
+     * Get the MySQL column type for the selected FK integer (always UNSIGNED).
+     */
+    protected function relationSqlColumnType(string $relationType): string
+    {
+        return match ($relationType) {
+            'bigInteger' => 'BIGINT UNSIGNED',
+            'integer' => 'INT UNSIGNED',
+            'mediumInteger' => 'MEDIUMINT UNSIGNED',
+            'smallInteger' => 'SMALLINT UNSIGNED',
+            'tinyInteger' => 'TINYINT UNSIGNED',
+            default => 'BIGINT UNSIGNED',
+        };
+    }
+
     public function analyze(string $table, array $items): array
     {
         $fieldSvc = app(SchemaFieldService::class);
@@ -26,20 +72,23 @@ class SchemaWizardService
                 $sqlLines[] = $res['estimated_sql'];
                 $warnings = array_merge($warnings, $res['warnings']);
             } else { // relation
-                $col = [
+                $nullable = (bool)($i['nullable'] ?? true);
+                $relationType = $this->resolveRelationType($i['relation_type'] ?? null);
+                $unsignedPhp = $this->relationPhpColumn($i['name'], $relationType, $nullable);
+                $phpLines[] = '    ' . $unsignedPhp . ';' . "\n" .
+                    '    ' . "\$table->foreign('{$i['name']}')->references('" . ($i['references_column'] ?? 'id') . "')->on('{$i['references_table']}')" .
+                    (!empty($i['on_update']) ? "->onUpdate('{$i['on_update']}')" : '') .
+                    (!empty($i['on_delete']) ? "->onDelete('{$i['on_delete']}')" : '') . ';';
+                $sqlCol = $this->relationSqlColumnType($relationType);
+                $sqlLines[] = "ALTER TABLE `{$table}` ADD COLUMN `{$i['name']}` {$sqlCol} " . ($nullable ? 'NULL' : 'NOT NULL') . ";\n" .
+                    "ALTER TABLE `{$table}` ADD CONSTRAINT `{$table}_{$i['name']}_fk` FOREIGN KEY (`{$i['name']}`) REFERENCES `{$i['references_table']}` (`" . ($i['references_column'] ?? 'id') . "')" .
+                    (!empty($i['on_update']) ? " ON UPDATE {$i['on_update']}" : '') .
+                    (!empty($i['on_delete']) ? " ON DELETE {$i['on_delete']}" : '') . ';';
+                $fieldRes = $fieldSvc->analyze($table, [
                     'name' => $i['name'],
                     'type' => 'foreignId',
-                    'nullable' => (bool)($i['nullable'] ?? true),
-                ];
-                $fieldRes = $fieldSvc->analyze($table, $col);
-                $phpLines[] = '    ' . "\$table->foreignId('{$i['name']}')" . (($i['nullable'] ?? true) ? '->nullable()' : '') . ';' . "\n" .
-                    '    ' . "\$table->foreign('{$i['name']}')->references('" . ($i['references_column'] ?? 'id') . "')->on('{$i['references_table']}')" .
-                    ($i['on_update'] ? "->onUpdate('{$i['on_update']}')" : '') .
-                    ($i['on_delete'] ? "->onDelete('{$i['on_delete']}')" : '') . ';';
-                $sqlLines[] = "ALTER TABLE `{$table}` ADD COLUMN `{$i['name']}` BIGINT " . (($i['nullable'] ?? true) ? 'NULL' : 'NOT NULL') . ";\n" .
-                    "ALTER TABLE `{$table}` ADD CONSTRAINT `{$table}_{$i['name']}_fk` FOREIGN KEY (`{$i['name']}`) REFERENCES `{$i['references_table']}` (`" . ($i['references_column'] ?? 'id') . "')" .
-                    ($i['on_update'] ? " ON UPDATE {$i['on_update']}" : '') .
-                    ($i['on_delete'] ? " ON DELETE {$i['on_delete']}" : '') . ';';
+                    'nullable' => $nullable,
+                ]);
                 $warnings = array_merge($warnings, $fieldRes['warnings'], [
                     'Foreign keys on large tables may lock the table; consider adding column first, backfill, then add constraint.',
                 ]);
@@ -99,7 +148,8 @@ class SchemaWizardService
                 }
             } else { // relation
                 $nullable = (bool)($i['nullable'] ?? true);
-                $linesUp[] = '            ' . "\$table->foreignId('{$i['name']}')" . ($nullable ? '->nullable()' : '') . ';';
+                $relationType = $this->resolveRelationType($i['relation_type'] ?? null);
+                $linesUp[] = '            ' . $this->relationPhpColumn($i['name'], $relationType, $nullable) . ';';
                 $fk = "            \$table->foreign('{$i['name']}')->references('" . ($i['references_column'] ?? 'id') . "')->on('{$i['references_table']}')";
                 if (!empty($i['on_update'])) {
                     $fk .= "->onUpdate('{$i['on_update']}')";
@@ -285,13 +335,22 @@ PHP;
         $nullable = (bool)($relation['nullable'] ?? true);
         $refTable = $relation['references_table'];
         $refColumn = $relation['references_column'] ?? 'id';
+        $relationType = $this->resolveRelationType($relation['relation_type'] ?? null);
 
         $createdColumn = false;
 
         // 1) Ensure column exists
         if (!\Illuminate\Support\Facades\Schema::hasColumn($table, $column)) {
-            \Illuminate\Support\Facades\Schema::table($table, function (\Illuminate\Database\Schema\Blueprint $t) use ($column, $nullable) {
-                $col = $t->foreignId($column);
+            \Illuminate\Support\Facades\Schema::table($table, function (\Illuminate\Database\Schema\Blueprint $t) use ($column, $nullable, $relationType) {
+                $method = match ($relationType) {
+                    'bigInteger' => 'unsignedBigInteger',
+                    'integer' => 'unsignedInteger',
+                    'mediumInteger' => 'unsignedMediumInteger',
+                    'smallInteger' => 'unsignedSmallInteger',
+                    'tinyInteger' => 'unsignedTinyInteger',
+                    default => 'unsignedBigInteger',
+                };
+                $col = $t->{$method}($column);
                 if ($nullable) {
                     $col->nullable();
                 }

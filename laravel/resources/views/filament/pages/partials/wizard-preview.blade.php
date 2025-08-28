@@ -2,7 +2,7 @@
 
 <div>
     @if (!$analysis)
-    <div class="text-gray-400">Complete steps 1 and 2 then click "Refresh Preview".</div>
+    <div class="text-gray-400">Click "Segarkan Pratinjau" untuk memunculkan preview</div>
     @else
     <x-filament::section>
         <x-slot name="heading">Impact</x-slot>
@@ -24,11 +24,6 @@
             @endforeach
         </ul>
         @endif
-    </x-filament::section>
-
-    <x-filament::section class="mt-4">
-        <x-slot name="heading">Migration (Laravel)</x-slot>
-        <pre class="text-xs overflow-auto">{{ $analysis['migration_php'] }}</pre>
     </x-filament::section>
 
     <x-filament::section class="mt-4">

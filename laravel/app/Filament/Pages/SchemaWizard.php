@@ -71,6 +71,7 @@ class SchemaWizard extends Page
                             ->addActionLabel('Tambah field / relasi')
                             ->minItems(1)
                             ->reorderable(true)
+                            ->live(onBlur: true)
                             ->schema([
                                 Forms\Components\Section::make('Change')
                                     ->collapsible()
@@ -116,6 +117,19 @@ class SchemaWizard extends Page
                                                 })
                                                 ->columnSpan(4)
                                                 ->helperText('Data dropdown akan diambil dari tabel ini.'),
+                                            Forms\Components\Select::make('relation_type')
+                                                ->label('Tipe Data Relasi')
+                                                ->options([
+                                                    'bigInteger' => 'bigInteger (unsigned)',
+                                                    'integer' => 'integer (unsigned)',
+                                                    'mediumInteger' => 'mediumInteger (unsigned)',
+                                                    'smallInteger' => 'smallInteger (unsigned)',
+                                                    'tinyInteger' => 'tinyInteger (unsigned)',
+                                                ])
+                                                ->default('bigInteger')
+                                                ->visible(fn($get) => $get('kind') === 'relation')
+                                                ->columnSpan(4)
+                                                ->helperText('Pilih tipe bilangan bulat untuk kolom FK (selalu unsigned).'),
                                             Forms\Components\TextInput::make('references_column')
                                                 ->label('Kolom Referensi')
                                                 ->default('id')
@@ -191,26 +205,44 @@ class SchemaWizard extends Page
                     ]),
                 Forms\Components\Wizard\Step::make('Tinjau & Konfirmasi')
                     ->schema([
-                        Forms\Components\View::make('filament.pages.partials.wizard-preview')->viewData([
-                            'analysis' => $this->analysis,
+                        Forms\Components\View::make('filament.pages.partials.wizard-summary')->viewData([
+                            'items' => $this->data['items'] ?? [],
                         ])->columnSpanFull(),
+
+                        Forms\Components\Section::make('Detail Teknis (untuk Developer)')
+                            ->collapsible()
+                            ->collapsed()
+                            ->schema([
+                                Forms\Components\View::make('filament.pages.partials.wizard-preview')->viewData([
+                                    'analysis' => $this->analysis,
+                                ]),
+                            ]),
+
                         Forms\Components\Actions::make([
                             Forms\Components\Actions\Action::make('analyze')->label('Segarkan Pratinjau')->action('refreshAnalysis')->color('secondary'),
                             Forms\Components\Actions\Action::make('execute')->label('Terapkan Perubahan Langsung')->requiresConfirmation()->modalHeading('Terapkan perubahan skema sekarang?')->modalDescription('Perubahan akan langsung diterapkan ke database tanpa membuat file migrasi. Gunakan opsi ini untuk pembaruan cepat di lingkungan non-produksi.')->color('primary')->action('applyChanges'),
                             Forms\Components\Actions\Action::make('generate')->label('Buat File Migrasi')->requiresConfirmation()->modalHeading('Buat file migrasi?')->modalDescription('Sistem akan membuat file migrasi agar Anda bisa meninjau dan menjalankannya dengan perintah "php artisan migrate".')->color('secondary')->action('generateMigration'),
                         ])->columnSpanFull(),
                     ]),
-            ])->persistStepInQueryString(),
+            ])
+            ->live()
+            ->afterStateUpdated(function ($livewire, $state) {
+                if ($state == 2) { // Step index is 0-based, '2' is the third step
+                    $livewire->refreshAnalysis();
+                }
+            })
+            ->persistStepInQueryString(),
         ])->statePath('data');
     }
 
-    public function refreshAnalysis(SchemaWizardService $svc): void
+    public function refreshAnalysis(): void
     {
         $state = $this->form->getState();
         if (empty($state['table']) || empty($state['items'])) {
             $this->analysis = null;
             return;
         }
+        $svc = app(\App\Services\SchemaWizardService::class);
         $this->analysis = $svc->analyze($state['table'], $state['items']);
     }
 
@@ -262,5 +294,11 @@ class SchemaWizard extends Page
             ->body("Dibuat: {$file}. Jalankan 'php artisan migrate' untuk menerapkan.")
             ->success()
             ->send();
+    }
+
+    // Auto-refresh preview when items change
+    public function updatedDataItems(): void
+    {
+        $this->refreshAnalysis();
     }
 }
