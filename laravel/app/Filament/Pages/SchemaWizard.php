@@ -221,17 +221,16 @@ class SchemaWizard extends Page
                         Forms\Components\Actions::make([
                             Forms\Components\Actions\Action::make('analyze')->label('Segarkan Pratinjau')->action('refreshAnalysis')->color('secondary'),
                             Forms\Components\Actions\Action::make('execute')->label('Terapkan Perubahan Langsung')->requiresConfirmation()->modalHeading('Terapkan perubahan skema sekarang?')->modalDescription('Perubahan akan langsung diterapkan ke database tanpa membuat file migrasi. Gunakan opsi ini untuk pembaruan cepat di lingkungan non-produksi.')->color('primary')->action('applyChanges'),
-                            Forms\Components\Actions\Action::make('generate')->label('Buat File Migrasi')->requiresConfirmation()->modalHeading('Buat file migrasi?')->modalDescription('Sistem akan membuat file migrasi agar Anda bisa meninjau dan menjalankannya dengan perintah "php artisan migrate".')->color('secondary')->action('generateMigration'),
                         ])->columnSpanFull(),
                     ]),
             ])
-            ->live()
-            ->afterStateUpdated(function ($livewire, $state) {
-                if ($state == 2) { // Step index is 0-based, '2' is the third step
-                    $livewire->refreshAnalysis();
-                }
-            })
-            ->persistStepInQueryString(),
+                ->live()
+                ->afterStateUpdated(function ($livewire, $state) {
+                    if ($state == 2) { // Step index is 0-based, '2' is the third step
+                        $livewire->refreshAnalysis();
+                    }
+                })
+                ->persistStepInQueryString(),
         ])->statePath('data');
     }
 
@@ -278,22 +277,6 @@ class SchemaWizard extends Page
                 ->danger()
                 ->send();
         }
-    }
-
-    public function generateMigration(SchemaWizardService $svc): void
-    {
-        $state = $this->form->getState();
-        if (empty($state['table']) || empty($state['items'])) {
-            Notification::make()->title('Tidak ada yang dapat dibuat')->danger()->send();
-            return;
-        }
-
-        $file = $svc->generateMigration($state['table'], $state['items']);
-        Notification::make()
-            ->title('File migrasi berhasil dibuat')
-            ->body("Dibuat: {$file}. Jalankan 'php artisan migrate' untuk menerapkan.")
-            ->success()
-            ->send();
     }
 
     // Auto-refresh preview when items change

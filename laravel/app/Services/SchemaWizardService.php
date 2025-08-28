@@ -4,10 +4,8 @@ namespace App\Services;
 
 use App\Models\CtoTableMeta;
 use App\Services\Dynamic\DynamicSchemaService;
-use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class SchemaWizardService
 {
@@ -81,7 +79,7 @@ class SchemaWizardService
                     (!empty($i['on_delete']) ? "->onDelete('{$i['on_delete']}')" : '') . ';';
                 $sqlCol = $this->relationSqlColumnType($relationType);
                 $sqlLines[] = "ALTER TABLE `{$table}` ADD COLUMN `{$i['name']}` {$sqlCol} " . ($nullable ? 'NULL' : 'NOT NULL') . ";\n" .
-                    "ALTER TABLE `{$table}` ADD CONSTRAINT `{$table}_{$i['name']}_fk` FOREIGN KEY (`{$i['name']}`) REFERENCES `{$i['references_table']}` (`" . ($i['references_column'] ?? 'id') . "')" .
+                    "ALTER TABLE `{$table}` ADD CONSTRAINT `{$table}_{$i['name']}_fk` FOREIGN KEY (`{$i['name']}`) REFERENCES `{$i['references_table']}` (`" . ($i['references_column'] ?? 'id') . "`)" .
                     (!empty($i['on_update']) ? " ON UPDATE {$i['on_update']}" : '') .
                     (!empty($i['on_delete']) ? " ON DELETE {$i['on_delete']}" : '') . ';';
                 $fieldRes = $fieldSvc->analyze($table, [
@@ -106,93 +104,7 @@ class SchemaWizardService
         ];
     }
 
-    public function generateMigration(string $table, array $items): string
-    {
-        $fs = new Filesystem();
-        $dir = base_path('database/migrations');
-        if (!$fs->exists($dir)) {
-            $fs->makeDirectory($dir, 0755, true);
-        }
-
-        $ts = now()->format('Y_m_d_His');
-        $name = "{$ts}_wizard_update_{$table}.php";
-        $path = $dir . DIRECTORY_SEPARATOR . $name;
-
-        $body = $this->buildMigrationBody($table, $items);
-        $fs->put($path, $body);
-        return $name;
-    }
-
-    protected function buildMigrationBody(string $table, array $items): string
-    {
-        $linesUp = [];
-        $linesDown = [];
-
-        foreach ($items as $i) {
-            if (($i['kind'] ?? 'field') === 'field') {
-                $svc = app(SchemaFieldService::class);
-                $linesUp[] = '            ' . $svcMethod = (new class($svc) {
-                    public function __construct(private SchemaFieldService $s) {}
-                    public function line(array $c)
-                    {
-                        return (new \ReflectionClass($this->s))->getMethod('blueprintLine')->invoke($this->s, $c);
-                    }
-                })->line($i) . ';';
-                $linesDown[] = "            \$table->dropColumn('{$i['name']}');";
-                if (!empty($i['unique'])) {
-                    $linesUp[] = "            \$table->unique('{$i['name']}');";
-                } elseif (!empty($i['index']) && $i['index'] === 'index') {
-                    $linesUp[] = "            \$table->index('{$i['name']}');";
-                } elseif (!empty($i['index']) && $i['index'] === 'fulltext') {
-                    $linesUp[] = "            \$table->fullText('{$i['name']}');";
-                }
-            } else { // relation
-                $nullable = (bool)($i['nullable'] ?? true);
-                $relationType = $this->resolveRelationType($i['relation_type'] ?? null);
-                $linesUp[] = '            ' . $this->relationPhpColumn($i['name'], $relationType, $nullable) . ';';
-                $fk = "            \$table->foreign('{$i['name']}')->references('" . ($i['references_column'] ?? 'id') . "')->on('{$i['references_table']}')";
-                if (!empty($i['on_update'])) {
-                    $fk .= "->onUpdate('{$i['on_update']}')";
-                }
-                if (!empty($i['on_delete'])) {
-                    $fk .= "->onDelete('{$i['on_delete']}')";
-                }
-                $fk .= ';';
-                $linesUp[] = $fk;
-                $linesDown[] = "            \$table->dropForeign(['{$i['name']}']);\n            \$table->dropColumn('{$i['name']}');";
-            }
-        }
-
-        $template = <<<'PHP'
-<?php
-
-use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
-
-return new class extends Migration {
-    public function up(): void
-    {
-        Schema::table('%TABLE%', function (Blueprint $table) {
-%UP%
-        });
-    }
-
-    public function down(): void
-    {
-        Schema::table('%TABLE%', function (Blueprint $table) {
-%DOWN%
-        });
-    }
-};
-PHP;
-
-        return str_replace(['%TABLE%', '%UP%', '%DOWN%'], [
-            $table,
-            implode("\n", $linesUp) ?: '            // no-op',
-            implode("\n", $linesDown) ?: '            // no-op',
-        ], $template);
-    }
+    // Migration file generation removed.
 
     public function runMigrations(): void
     {
