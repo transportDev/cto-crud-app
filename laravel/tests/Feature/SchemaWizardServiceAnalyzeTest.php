@@ -12,11 +12,13 @@ class SchemaWizardServiceAnalyzeTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Schema::create('posts', function (Blueprint $table) {
+    Schema::dropIfExists('posts');
+    Schema::create('posts', function (Blueprint $table) {
             $table->increments('id');
             $table->string('title')->nullable();
         });
-        Schema::create('vendors', function (Blueprint $table) {
+    Schema::dropIfExists('vendors');
+    Schema::create('vendors', function (Blueprint $table) {
             $table->increments('id');
             $table->string('vendor_code');
             $table->string('vendor_name');

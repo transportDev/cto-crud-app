@@ -15,6 +15,7 @@ class SchemaFieldServiceTest extends TestCase
         parent::setUp();
 
         // Minimal table for analysis context
+    Schema::dropIfExists('posts');
         Schema::create('posts', function (Blueprint $table) {
             $table->increments('id');
             $table->string('title')->nullable();
