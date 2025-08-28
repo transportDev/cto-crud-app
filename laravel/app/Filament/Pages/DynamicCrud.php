@@ -4,6 +4,10 @@ namespace App\Filament\Pages;
 
 use App\Models\DynamicModel;
 use App\Services\TableBuilderService;
+use App\Services\Dynamic\DynamicSchemaService;
+use App\Services\Dynamic\DynamicQueryBuilder;
+use App\Services\Dynamic\DynamicFormService;
+use App\Services\Dynamic\DynamicExportService;
 use Filament\Forms;
 use Filament\Forms\Components\Select as FormSelect;
 use Filament\Forms\Contracts\HasForms;
@@ -18,6 +22,7 @@ use Filament\Tables\Actions\CreateAction;
 use Filament\Tables\Actions\DeleteAction;
 use Filament\Tables\Actions\EditAction;
 use Filament\Tables\Actions\ViewAction;
+use Filament\Support\Exceptions\Halt;
 use Filament\Tables\Columns\BadgeColumn;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
@@ -26,11 +31,14 @@ use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Validator;
 
 class DynamicCrud extends Page implements HasTable, HasForms
 {
@@ -48,6 +56,13 @@ class DynamicCrud extends Page implements HasTable, HasForms
     // Header selector form
     public ?array $config = [];
     public ?string $selectedTable = null;
+    /**
+     * Per-table selected fields for listing view.
+     * Keys:
+     *  - self:{column}
+     *  - fk:{fk_column}:{ref_table}:{ref_column}
+     */
+    public array $tableFieldSelections = [];
 
     public static function canAccess(): bool
     {
@@ -68,12 +83,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return self::canAccess();
     }
 
+    /**
+     * Keep constructor injection minimal; mount resolves services.
+     */
     public function mount(TableBuilderService $svc): void
     {
         if (!self::canAccess()) {
             abort(403);
         }
 
+        // Whitelisted tables only
         $tables = $svc->listUserTables();
         if (!$this->selectedTable && !empty($tables)) {
             $this->selectedTable = $tables[0];
@@ -90,12 +109,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ->label('Pilih tabel')
                     ->searchable()
                     ->options(function () {
+                        // Use table whitelist as options
                         $tables = app(TableBuilderService::class)->listUserTables();
                         return array_combine($tables, $tables);
                     })
                     ->live()
                     ->afterStateUpdated(function (?string $state) {
-                        $this->selectedTable = $state;
+                        $safe = app(DynamicSchemaService::class)->sanitizeTable($state);
+                        $this->selectedTable = $safe;
                         // Force table to refresh its query/columns
                         $this->resetTable();
                     })
@@ -113,6 +134,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->headerActions($this->buildHeaderActions())
             ->actions($this->buildRowActions())
             ->bulkActions($this->buildBulkActions())
+            // Hide the toggle-columns dropdown trigger button
+            ->toggleColumnsTriggerAction(fn(Action $action) => $action->hidden())
             ->emptyStateHeading($this->selectedTable ? 'Tidak ada data ditemukan' : 'Pilih tabel untuk memulai')
             ->emptyStateDescription($this->selectedTable
                 ? 'Belum ada data pada tabel ini. Tambahkan data baru untuk mulai mengelola.'
@@ -124,22 +147,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
     protected function getRuntimeQuery(): Builder
     {
-        $model = new DynamicModel();
-
-        if (!$this->selectedTable) {
-            $model->setRuntimeTable('users');
-            return $model->newQuery()->whereRaw('1 = 0');
-        }
-
-        $model->setRuntimeTable($this->selectedTable);
-        $builder = $model->newQuery();
-
-        // Default: hide soft-deleted if present
-        if ($this->hasDeletedAtColumn()) {
-            $builder->whereNull($this->qualified('deleted_at'));
-        }
-
-        return $builder;
+        $qb = app(DynamicQueryBuilder::class);
+        return $qb->build($this->selectedTable, $this->selectedFieldsForTable());
     }
 
     protected function inferTableColumns(): array
@@ -148,56 +157,67 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return [];
         }
 
-        $columns = $this->getColumnMeta();
+        $columns = app(DynamicSchemaService::class)->columns($this->selectedTable);
         $filamentColumns = [];
 
-        // Prefer to show up to 8 columns in the table by default
-        $displayColumns = \array_slice($columns, 0, 8, preserve_keys: true);
-
-        foreach ($displayColumns as $name => $meta) {
-            $label = Str::headline($name);
-
-            $type = $meta['type'] ?? 'string';
-            $col = null;
-
-            if ($type === 'boolean') {
-                $col = IconColumn::make($name)
-                    ->boolean()
-                    ->trueIcon('heroicon-o-check-circle')
-                    ->falseIcon('heroicon-o-x-circle')
-                    ->trueColor('success')
-                    ->falseColor('danger');
-            } elseif (in_array($type, ['date', 'datetime', 'datetimetz', 'timestamp', 'time'], true)) {
-                $col = TextColumn::make($name)
-                    ->dateTime()
-                    ->toggleable()
-                    ->sortable();
-            } elseif (in_array($type, ['enum', 'set'], true)) {
-                $col = BadgeColumn::make($name)
-                    ->formatStateUsing(fn($state) => (string) $state)
-                    ->colors([
-                        'primary' => fn($state) => filled($state),
-                    ])
-                    ->sortable()
-                    ->toggleable();
-            } elseif (in_array($type, ['json'], true)) {
-                $col = TextColumn::make($name)
-                    ->limit(60)
-                    ->tooltip(fn($state) => \is_string($state) ? $state : json_encode($state))
-                    ->toggleable();
-            } else {
-                $col = TextColumn::make($name)
-                    ->label($label)
-                    ->searchable(in_array($type, ['string', 'text', 'char', 'uuid', 'ulid'], true))
-                    ->toggleable()
-                    ->sortable();
+        $selectedKeys = $this->selectedFieldsForTable();
+        if (empty($selectedKeys)) {
+            $displayColumns = \array_slice($columns, 0, 20, true);
+            foreach ($displayColumns as $name => $meta) {
+                $selectedKeys[] = 'self:' . $name;
             }
+        }
 
-            if ($this->isPrimaryKey($name)) {
-                $col->label($label . ' (PK)')->weight('bold');
+        foreach ($selectedKeys as $key) {
+            if (str_starts_with($key, 'self:')) {
+                $name = substr($key, 5);
+                $meta = $columns[$name] ?? ['type' => 'string'];
+                $label = Str::headline($name);
+                $type = $meta['type'] ?? 'string';
+                $col = null;
+
+                if ($type === 'boolean') {
+                    $col = IconColumn::make($name)
+                        ->boolean()
+                        ->trueIcon('heroicon-o-check-circle')
+                        ->falseIcon('heroicon-o-x-circle')
+                        ->trueColor('success')
+                        ->falseColor('danger');
+                } elseif (in_array($type, ['date', 'datetime', 'datetimetz', 'timestamp', 'time'], true)) {
+                    $col = TextColumn::make($name)
+                        ->dateTime();
+                } elseif (in_array($type, ['enum', 'set'], true)) {
+                    $col = BadgeColumn::make($name)
+                        ->formatStateUsing(fn($state) => (string) $state)
+                        ->colors([
+                            'primary' => fn($state) => filled($state),
+                        ])
+                        ->sortable();
+                } elseif (in_array($type, ['json'], true)) {
+                    $col = TextColumn::make($name)
+                        ->limit(60)
+                        ->tooltip(fn($state) => \is_string($state) ? $state : json_encode($state));
+                } else {
+                    $isTextLike = in_array($type, ['string', 'char', 'uuid', 'ulid'], true);
+                    $searchable = $isTextLike && app(DynamicSchemaService::class)->isIndexed($this->selectedTable, $name);
+                    $col = TextColumn::make($name)
+                        ->label($label)
+                        ->searchable($searchable)
+                        ->sortable();
+                }
+
+                if ($this->isPrimaryKey($name)) {
+                    $col->label($label . ' (PK)')->weight('bold');
+                }
+
+                $filamentColumns[] = $col;
+            } elseif (str_starts_with($key, 'fk:')) {
+                [, $fkCol, $refTable, $refCol] = explode(':', $key, 4);
+                $alias = app(DynamicQueryBuilder::class)->columnAlias($fkCol, $refTable, $refCol);
+                $label = Str::headline($refTable . ' ' . $refCol);
+                $filamentColumns[] = TextColumn::make($alias)
+                    ->label($label);
             }
-
-            $filamentColumns[] = $col;
         }
 
         return $filamentColumns;
@@ -206,6 +226,70 @@ class DynamicCrud extends Page implements HasTable, HasForms
     protected function buildHeaderActions(): array
     {
         return [
+            Action::make('select_fields')
+                ->label('Pilih Kolom')
+                ->icon('heroicon-o-adjustments-horizontal')
+                ->visible(fn() => filled($this->selectedTable))
+                ->modalHeading('Pilih Kolom Ditampilkan')
+                ->modalSubmitActionLabel('Terapkan')
+                ->form(function () {
+                    $schema = [];
+                    // Self table fields
+                    $selfOptions = [];
+                    foreach (array_keys($this->getColumnMeta()) as $col) {
+                        $selfOptions['self:' . $col] = $col;
+                    }
+                    $schema[] = Forms\Components\Section::make('Kolom Tabel Ini')
+                        ->schema([
+                            Forms\Components\CheckboxList::make('selected_self_fields')
+                                ->options($selfOptions)
+                                ->columns(2)
+                                ->bulkToggleable()
+                                ->default(array_values(array_filter($this->selectedFieldsForTable(), fn($k) => str_starts_with($k, 'self:')))),
+                        ]);
+
+                    // Related fields grouped by FK
+                    $fkMap = app(DynamicSchemaService::class)->foreignKeys($this->selectedTable);
+                    foreach ($fkMap as $fkCol => $ref) {
+                        $refTable = $ref['referenced_table'];
+                        if (!$refTable) {
+                            continue;
+                        }
+                        $refCols = Schema::getColumns($refTable);
+                        $opts = [];
+                        foreach ($refCols as $c) {
+                            $cName = $c['name'];
+                            if (in_array($cName, ['created_at', 'updated_at', 'deleted_at'], true)) {
+                                continue;
+                            }
+                            $opts["fk:{$fkCol}:{$refTable}:{$cName}"] = $cName;
+                        }
+                        $schema[] = Forms\Components\Section::make("{$refTable} (via {$fkCol})")
+                            ->description("Pilih kolom dari {$refTable}")
+                            ->schema([
+                                Forms\Components\CheckboxList::make('selected_' . $fkCol)
+                                    ->options($opts)
+                                    ->columns(2)
+                                    ->bulkToggleable()
+                                    ->default(array_values(array_filter($this->selectedFieldsForTable(), fn($k) => str_starts_with($k, "fk:{$fkCol}:{$refTable}:")))),
+                            ]);
+                    }
+
+                    return $schema;
+                })
+                ->action(function (array $data) {
+                    $selected = [];
+                    foreach ($data as $vals) {
+                        if (!is_array($vals)) {
+                            continue;
+                        }
+                        foreach ($vals as $v) {
+                            $selected[] = $v;
+                        }
+                    }
+                    $this->tableFieldSelections[$this->selectedTable] = array_values(array_unique($selected));
+                    $this->resetTable();
+                }),
             CreateAction::make()
                 ->label('Tambah data')
                 ->icon('heroicon-o-plus-circle')
@@ -214,14 +298,31 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->modalHeading(fn() => 'Tambah Data - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
                 ->modalSubmitActionLabel('Simpan')
                 ->modalCancelActionLabel('Batal')
-                ->form(fn() => $this->inferFormSchema(isEdit: false))
+                ->form(fn() => $this->inferFormSchema(false))
                 ->using(function (array $data): Model {
-                    $model = new DynamicModel();
-                    $model->setRuntimeTable($this->selectedTable);
+                    try {
+                        // Validate against schema (cached)
+                        $rules = $this->buildValidationRules(false);
+                        Validator::make($data, $rules)->validate();
 
-                    $this->applySafeDefaults($data, isEdit: false);
+                        // Resolve any embedded FK fields (from relation label columns) into actual FK IDs
+                        $this->resolveEmbeddedForeigns($data);
 
-                    $record = $model->create($data);
+                        $model = new DynamicModel();
+                        $model->setRuntimeTable($this->selectedTable);
+
+                        $this->applySafeDefaults($data, false);
+
+                        $record = $model->create($data);
+                    } catch (ValidationException $ve) {
+                        $msg = $this->firstValidationMessage($ve);
+                        Notification::make()->danger()->title('Input tidak valid')->body($msg)->send();
+                        throw $ve; // Let Filament highlight fields as well (keeps modal open)
+                    } catch (QueryException $qe) {
+                        [$t, $b] = $this->friendlyDbError($qe);
+                        Notification::make()->danger()->title($t)->body($b)->send();
+                        throw new Halt(); // keep modal open, no success toast
+                    }
 
                     $this->audit('record.created', [
                         'table' => $this->selectedTable,
@@ -244,22 +345,34 @@ class DynamicCrud extends Page implements HasTable, HasForms
     protected function buildRowActions(): array
     {
         return [
-            ViewAction::make()
-                ->form(fn($record) => $this->inferFormSchema(isEdit: false, forView: true))
-                ->modalHeading(fn() => 'Lihat Data - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
-                ->modalSubmitActionLabel('Tutup')
-                ->label('Lihat'),
             EditAction::make()
                 ->label('Ubah')
                 ->modalHeading(fn() => 'Edit Record - ' . ($this->selectedTable ? Str::headline($this->selectedTable) : ''))
                 ->modalSubmitActionLabel('Simpan')
                 ->modalCancelActionLabel('Batal')
-                ->form(fn($record) => $this->inferFormSchema(isEdit: true))
+                ->form(fn($record) => $this->inferFormSchema(true))
                 ->using(function (Model $record, array $data) {
-                    $this->applySafeDefaults($data, isEdit: true);
+                    try {
+                        // Validate against schema (cached)
+                        $rules = $this->buildValidationRules(true);
+                        Validator::make($data, $rules)->validate();
 
-                    $record->fill($data);
-                    $record->save();
+                        // No embedded creation on edit; ignore any stray embedded keys
+                        $this->stripEmbeddedForeigns($data);
+
+                        $this->applySafeDefaults($data, true);
+
+                        $record->fill($data);
+                        $record->save();
+                    } catch (ValidationException $ve) {
+                        $msg = $this->firstValidationMessage($ve);
+                        Notification::make()->danger()->title('Input tidak valid')->body($msg)->send();
+                        throw $ve; // keeps modal open and highlights fields
+                    } catch (QueryException $qe) {
+                        [$t, $b] = $this->friendlyDbError($qe);
+                        Notification::make()->danger()->title($t)->body($b)->send();
+                        throw new Halt();
+                    }
 
                     $this->audit('record.updated', [
                         'table' => $this->selectedTable,
@@ -278,9 +391,25 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->modalSubmitActionLabel('Hapus')
                 ->modalCancelActionLabel('Batal')
                 ->visible(fn() => !$this->isSystemTable($this->selectedTable))
-                ->before(function (Model $record) {
-                    // Optional: Check FK constraints proactively
-                    // Rely on DB constraints to block if violation occurs.
+                ->using(function (Model $record) {
+                    // Schema-aware guard: block delete when restricted by FK constraints
+                    $blocked = $this->hasRestrictingIncomingReferences($record->{$this->primaryKeyName()});
+                    if ($blocked) {
+                        Notification::make()
+                            ->danger()
+                            ->title('Tidak dapat menghapus')
+                            ->body('Record ini direferensikan oleh tabel lain (ON DELETE RESTRICT/NO ACTION).')
+                            ->send();
+                        return $record; // do not delete
+                    }
+
+                    try {
+                        $record->delete();
+                    } catch (QueryException $e) {
+                        Notification::make()->danger()->title('Gagal menghapus')->body('Terkendala relasi database.')->send();
+                    }
+
+                    return $record;
                 })
                 ->after(function (Model $record) {
                     $this->audit('record.deleted', [
@@ -310,12 +439,27 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
                     $ids = $action->getRecords()->pluck($this->primaryKeyName())->all();
                     if (!empty($ids)) {
-                        $model->newQuery()->whereIn($this->primaryKeyName(), $ids)->delete();
+                        $deletable = [];
+                        $blocked = [];
+                        foreach ($ids as $id) {
+                            if ($this->hasRestrictingIncomingReferences($id)) {
+                                $blocked[] = $id;
+                            } else {
+                                $deletable[] = $id;
+                            }
+                        }
 
-                        $this->audit('record.bulk_deleted', [
-                            'table' => $this->selectedTable,
-                            'ids' => $ids,
-                        ]);
+                        if (!empty($deletable)) {
+                            $model->newQuery()->whereIn($this->primaryKeyName(), $deletable)->delete();
+                            $this->audit('record.bulk_deleted', [
+                                'table' => $this->selectedTable,
+                                'ids' => $deletable,
+                            ]);
+                        }
+
+                        if (!empty($blocked)) {
+                            Notification::make()->warning()->title('Sebagian tidak terhapus')->body('Beberapa record direferensikan dan diblokir oleh FK.')->send();
+                        }
                     }
                 })
                 ->successNotificationTitle('Data terpilih berhasil dihapus')
@@ -334,9 +478,9 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->falseLabel('Kecualikan yang dihapus')
                 ->nullable()
                 ->queries(
-                    true: fn(Builder $query) => $query->whereNotNull($this->qualified('deleted_at')),
-                    false: fn(Builder $query) => $query->whereNull($this->qualified('deleted_at')),
-                    blank: fn(Builder $query) => $query
+                    fn(Builder $query) => $query->whereNotNull($this->qualified('deleted_at')),
+                    fn(Builder $query) => $query->whereNull($this->qualified('deleted_at')),
+                    fn(Builder $query) => $query
                 );
         }
 
@@ -345,109 +489,97 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
     protected function inferFormSchema(bool $isEdit, bool $forView = false): array
     {
-        $schema = [];
-        $columns = $this->getColumnMeta();
+        if (!$this->selectedTable) return [];
+        return app(DynamicFormService::class)->buildForm($this->selectedTable, $isEdit, $forView);
+    }
 
-        foreach ($columns as $name => $meta) {
-            if ($this->isSystemColumn($name)) {
-                continue;
-            }
+    protected function selectedFieldsForTable(): array
+    {
+        if (!$this->selectedTable) {
+            return [];
+        }
+        return $this->tableFieldSelections[$this->selectedTable] ?? [];
+    }
 
-            $type = $meta['type'] ?? 'string';
-            $nullable = (bool) ($meta['nullable'] ?? false);
-            $length = $meta['length'] ?? null;
+    protected function aliasForJoin(string $fkCol, string $refTable): string
+    {
+        return $refTable . '__' . $fkCol;
+    }
 
-            // Primary keys are not editable once created if unsafe
-            if ($this->isPrimaryKey($name) && $isEdit) {
-                $component = Forms\Components\TextInput::make($name)
-                    ->disabled()
-                    ->dehydrated(false)
-                    ->label(Str::headline($name));
-                $schema[] = $component;
-                continue;
-            }
+    protected function aliasForJoinColumn(string $fkCol, string $refTable, string $refCol): string
+    {
+        return 'fk_' . $fkCol . '__' . $refTable . '__' . $refCol;
+    }
 
-            // Type mapping
-            $component = match (true) {
-                in_array($type, ['text', 'mediumText', 'longText'], true) =>
-                Forms\Components\Textarea::make($name)->rows(4),
-                in_array($type, ['integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true) =>
-                Forms\Components\TextInput::make($name)->numeric(),
-                in_array($type, ['decimal', 'float', 'double'], true) =>
-                Forms\Components\TextInput::make($name)->numeric(),
-                $type === 'boolean' =>
-                Forms\Components\Toggle::make($name),
-                in_array($type, ['date', 'time'], true) =>
-                Forms\Components\DateTimePicker::make($name)->withoutTime()->native(false),
-                in_array($type, ['datetime', 'datetimetz', 'timestamp'], true) =>
-                Forms\Components\DateTimePicker::make($name)->native(false),
-                $type === 'json' =>
-                Forms\Components\KeyValue::make($name)->addable()->deletable()->reorderable()->keyLabel('kunci')->valueLabel('nilai'),
-                in_array($type, ['enum', 'set'], true) =>
-                Forms\Components\Select::make($name)
-                    ->options(function () use ($name, $meta) {
-                        $opts = $meta['options'] ?? [];
-                        return array_combine($opts, $opts);
-                    })
-                    ->multiple($type === 'set')
-                    ->searchable(),
-                default =>
-                Forms\Components\TextInput::make($name)->maxLength($length ?: 65535),
-            };
-
-            // Foreign key inference (_id postfix)
-            if ($this->looksLikeForeignKey($name)) {
-                $refTable = Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
-                if (Schema::hasTable($refTable)) {
-                    $labelColumn = $this->guessLabelColumn($refTable);
-                    $component = Forms\Components\Select::make($name)
-                        ->searchable()
-                        ->getSearchResultsUsing(
-                            fn(string $search) =>
-                            DB::table($refTable)
-                                ->where($labelColumn, 'like', "%{$search}%")
-                                ->limit(50)
-                                ->pluck($labelColumn, 'id')
-                        )
-                        ->getOptionLabelUsing(
-                            fn($value): ?string =>
-                            DB::table($refTable)
-                                ->where('id', $value)
-                                ->value($labelColumn)
-                        )
-                        ->helperText("Referensi {$refTable}.{$labelColumn}");
-                }
-            }
-
-            $component->label(Str::headline($name));
-
-            // Validation
-            $rules = [];
-            if (!$nullable && !$forView) {
-                $component->required();
-            }
-            if ($length && \is_int($length) && !$forView && $component instanceof Forms\Components\TextInput) {
-                $component->maxLength($length);
-            }
-            if (in_array($type, ['integer', 'tinyint', 'smallint', 'mediumint', 'bigint', 'decimal', 'float', 'double'], true) && !$forView) {
-                $rules[] = 'numeric';
-            }
-            if (in_array($type, ['date', 'time', 'datetime', 'datetimetz', 'timestamp'], true) && !$forView) {
-                $rules[] = 'date';
-            }
-            if ($rules) {
-                $component->rule(implode('|', $rules));
-            }
-
-            // Disable when viewing
-            if ($forView) {
-                $component->disabled()->dehydrated(false);
-            }
-
-            $schema[] = $component;
+    protected function getForeignKeyMap(string $table): array
+    {
+        try {
+            $driver = DB::connection()->getDriverName();
+        } catch (\Throwable $e) {
+            $driver = 'mysql';
         }
 
-        return $schema;
+        $map = [];
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            $db = DB::getDatabaseName();
+            $rows = DB::select(
+                'SELECT k.COLUMN_NAME, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME
+                 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
+                 WHERE k.TABLE_SCHEMA = ? AND k.TABLE_NAME = ? AND k.REFERENCED_TABLE_NAME IS NOT NULL',
+                [$db, $table]
+            );
+            foreach ($rows as $r) {
+                $col = $r->COLUMN_NAME;
+                $map[$col] = [
+                    'referenced_table' => $r->REFERENCED_TABLE_NAME,
+                    'referenced_column' => $r->REFERENCED_COLUMN_NAME,
+                ];
+            }
+        }
+
+        return $map;
+    }
+
+    protected function isPrimaryAutoIncrement(): bool
+    {
+        $pk = $this->primaryKeyName();
+        $columns = $this->getColumnMeta();
+        $type = $columns[$pk]['type'] ?? null;
+
+        try {
+            $driver = DB::connection()->getDriverName();
+        } catch (\Throwable $e) {
+            $driver = 'mysql';
+        }
+
+        if (in_array($driver, ['mysql', 'mariadb'], true)) {
+            $db = DB::getDatabaseName();
+            $row = DB::selectOne(
+                'SELECT EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+                [$db, $this->selectedTable, $pk]
+            );
+            if ($row && isset($row->EXTRA) && stripos($row->EXTRA, 'auto_increment') !== false) {
+                return true;
+            }
+        }
+
+        // Heuristic fallback
+        return $pk === 'id' && in_array($type, ['integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true);
+    }
+
+    protected function firstValidationMessage(ValidationException $ve): string
+    {
+        try {
+            $errors = $ve->errors();
+            foreach ($errors as $field => $messages) {
+                if (!empty($messages)) {
+                    return (string) $messages[0];
+                }
+            }
+        } catch (\Throwable $e) {
+            // Fallback
+        }
+        return 'Input tidak valid.';
     }
 
     protected function applySafeDefaults(array &$data, bool $isEdit): void
@@ -470,6 +602,88 @@ class DynamicCrud extends Page implements HasTable, HasForms
         }
     }
 
+    /**
+     * Convert embedded FK label fields into real FK IDs on create. Keys look like
+     * fk_new__{fk_col}__{ref_table}__{label_col}. We attempt to find an existing
+     * row by all label columns; if not found, we insert a new row and set the FK.
+     */
+    protected function resolveEmbeddedForeigns(array &$data): void
+    {
+        $fks = app(DynamicSchemaService::class)->foreignKeys($this->selectedTable);
+        foreach ($fks as $fkCol => $ref) {
+            $refTable = $ref['referenced_table'] ?? null;
+            $refPk = $ref['referenced_column'] ?? 'id';
+            if (!$refTable) continue;
+
+            // Collect embedded fields
+            $prefix = 'fk_new__' . $fkCol . '__' . $refTable . '__';
+            $labelFields = [];
+            foreach ($data as $k => $v) {
+                if (str_starts_with($k, $prefix)) {
+                    $labelCol = substr($k, strlen($prefix));
+                    $labelFields[$labelCol] = $v;
+                }
+            }
+            if (empty($labelFields)) continue;
+
+            // Try to locate existing row by exact match on provided label columns
+            $q = DB::table($refTable);
+            foreach ($labelFields as $col => $val) {
+                if (Schema::hasColumn($refTable, $col)) {
+                    $q->where($col, $val);
+                }
+            }
+            $existing = $q->select($refPk)->first();
+            if ($existing && isset($existing->{$refPk})) {
+                $data[$fkCol] = $existing->{$refPk};
+            } else {
+                // Insert and set FK
+                $isAuto = app(DynamicSchemaService::class)->isPrimaryAutoIncrement($refTable);
+                if (!$isAuto && !isset($labelFields[$refPk]) && Schema::hasColumn($refTable, $refPk)) {
+                    // Cannot infer PK; skip creating
+                    continue;
+                }
+                $payload = $labelFields;
+                if ($isAuto) {
+                    unset($payload[$refPk]);
+                    $newId = DB::table($refTable)->insertGetId($payload);
+                    $data[$fkCol] = $newId;
+                } else {
+                    DB::table($refTable)->insert($payload);
+                    $data[$fkCol] = $payload[$refPk];
+                }
+            }
+
+            // Cleanup embedded fields from payload
+            foreach (array_keys($labelFields) as $c) {
+                unset($data[$prefix . $c]);
+            }
+        }
+    }
+
+    protected function stripEmbeddedForeigns(array &$data): void
+    {
+        foreach (array_keys($data) as $k) {
+            if (str_starts_with($k, 'fk_new__')) unset($data[$k]);
+        }
+    }
+
+    /**
+     * Build Laravel validation rules derived from the current table schema.
+     * - required for non-nullable, unless auto-increment PK on create
+     * - numeric rules for integer/decimal types
+     * - date rules for date/time types
+     * - string length max for varchar/char
+     * - exists rule for foreign keys
+     */
+    protected function buildValidationRules(bool $isEdit): array
+    {
+        if (!$this->selectedTable) {
+            return [];
+        }
+        return app(DynamicFormService::class)->buildRules($this->selectedTable, $isEdit);
+    }
+
     protected function isPrimaryKey(string $column): bool
     {
         return $column === $this->primaryKeyName();
@@ -482,21 +696,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return 'id';
         }
 
-        // Laravel's native schema builder doesn't have a universal, reliable way to get
-        // the primary key name across all DB drivers without Doctrine. We'll use a
-        // reliable heuristic that covers 99% of cases.
-        if (Schema::hasColumn($this->selectedTable, 'id')) {
-            return 'id';
-        }
-
-        $guess = Str::of($this->selectedTable)->singular()->snake()->append('_id')->toString();
-        if (Schema::hasColumn($this->selectedTable, $guess)) {
-            return $guess;
-        }
-
-        // Fallback to the first column if no better guess.
-        $columns = Schema::getColumnListing($this->selectedTable);
-        return $columns[0] ?? 'id';
+        // Prefer metadata via DynamicSchemaService
+        return app(DynamicSchemaService::class)->primaryKey($this->selectedTable);
     }
 
     protected function looksLikeForeignKey(string $column): bool
@@ -509,9 +710,80 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return in_array($name, ['created_at', 'updated_at', 'deleted_at'], true);
     }
 
+    /**
+     * Map database errors to friendly, actionable messages.
+     * Returns [title, body].
+     */
+    protected function friendlyDbError(QueryException $e): array
+    {
+        $sqlState = $e->errorInfo[0] ?? null; // e.g. '23000'
+        $driverCode = (int) ($e->errorInfo[1] ?? 0); // MySQL error number
+        $message = (string) ($e->errorInfo[2] ?? $e->getMessage());
+
+        // Data too long for column -> truncate/length guidance
+        if ($driverCode === 1406 || Str::contains($message, ['Data too long for column', 'value too long'])) {
+            // Try to extract column name
+            preg_match("/for column '([^']+)'/i", $message, $m);
+            $col = $m[1] ?? null;
+            $title = 'Teks terlalu panjang';
+            $body = $col
+                ? "Nilai untuk kolom '{$col}' melebihi batas panjang. Kurangi jumlah karakter sesuai panjang kolom."
+                : 'Beberapa isian melebihi batas panjang. Kurangi jumlah karakter sesuai panjang kolom.';
+            return [$title, $body];
+        }
+
+        // Incorrect integer value / wrong type
+        if (Str::contains($message, ['Incorrect integer value', 'Incorrect double value', 'Incorrect decimal value'])) {
+            preg_match("/for column '([^']+)'/i", $message, $m);
+            $col = $m[1] ?? null;
+            $title = 'Format angka tidak valid';
+            $body = $col
+                ? "Isian '{$col}' harus berupa angka yang valid."
+                : 'Beberapa isian angka tidak valid. Gunakan hanya angka.';
+            return [$title, $body];
+        }
+
+        // Foreign key constraint fails
+        if ($driverCode === 1452 || Str::contains($message, 'foreign key constraint fails')) {
+            preg_match("/CONSTRAINT `[^`]+` FOREIGN KEY \(`([^`]+)`\)/i", $message, $m);
+            $col = $m[1] ?? null;
+            $title = 'Referensi tidak ditemukan';
+            $body = $col
+                ? "Nilai pada '{$col}' tidak cocok dengan data referensi. Pilih nilai yang tersedia di daftar."
+                : 'Beberapa nilai referensi tidak ditemukan. Pilih nilai yang tersedia di daftar.';
+            return [$title, $body];
+        }
+
+        // Duplicate entry for unique index
+        if ($driverCode === 1062 || Str::contains($message, 'Duplicate entry')) {
+            preg_match("/Duplicate entry '([^']+)' for key '([^']+)'/i", $message, $m);
+            $val = $m[1] ?? null;
+            $key = $m[2] ?? null;
+            $title = 'Nilai sudah dipakai';
+            $body = $val && $key
+                ? "Nilai '{$val}' sudah digunakan (unik: {$key}). Gunakan nilai lain."
+                : 'Ada nilai yang harus unik sudah digunakan. Gunakan nilai lain.';
+            return [$title, $body];
+        }
+
+        // Cannot be null
+        if ($driverCode === 1048 || Str::contains($message, 'cannot be null')) {
+            preg_match("/Column '([^']+)' cannot be null/i", $message, $m);
+            $col = $m[1] ?? null;
+            $title = 'Isian wajib diisi';
+            $body = $col
+                ? "Kolom '{$col}' wajib diisi."
+                : 'Ada kolom yang wajib diisi.';
+            return [$title, $body];
+        }
+
+        // Default fallback
+        return ['Gagal menyimpan', 'Periksa input Anda dan coba lagi.'];
+    }
+
     protected function hasDeletedAtColumn(): bool
     {
-        return $this->selectedTable && Schema::hasColumn($this->selectedTable, 'deleted_at');
+        return $this->selectedTable && app(DynamicSchemaService::class)->hasDeletedAt($this->selectedTable);
     }
 
     protected function qualified(string $column): string
@@ -521,39 +793,12 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
     protected function guessLabelColumn(string $table): string
     {
-        foreach (['name', 'title', 'label', 'email'] as $col) {
-            if (Schema::hasColumn($table, $col)) {
-                return $col;
-            }
-        }
-        return 'id';
+        return app(DynamicSchemaService::class)->guessLabelColumn($table);
     }
 
     protected function getColumnMeta(): array
     {
-        if (!$this->selectedTable) {
-            return [];
-        }
-
-        $meta = [];
-        // Use Laravel's native schema introspection. It's less detailed than Doctrine
-        // for things like enums or defaults, but it's universal and dependency-free.
-        $columns = Schema::getColumns($this->selectedTable);
-
-        foreach ($columns as $column) {
-            $name = $column['name'];
-            $type = $column['type']; // Note: this is the simplified Laravel type
-
-            $meta[$name] = [
-                'type' => $type,
-                'nullable' => (bool)$column['nullable'],
-                'length' => $column['size'] ?? null,
-                'default' => $column['default'],
-                'options' => [], // Native schema doesn't reliably provide enum options
-            ];
-        }
-
-        return $meta;
+        return $this->selectedTable ? app(DynamicSchemaService::class)->columns($this->selectedTable) : [];
     }
 
     protected function isSystemTable(?string $name): bool
@@ -583,6 +828,46 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return in_array($name, $excluded, true);
     }
 
+    /**
+     * Check if the given PK value has incoming FK references with DELETE_RULE RESTRICT/NO ACTION.
+     */
+    protected function hasRestrictingIncomingReferences($pkValue): bool
+    {
+        try {
+            $driver = DB::connection()->getDriverName();
+        } catch (\Throwable $e) {
+            $driver = 'mysql';
+        }
+
+        if (!in_array($driver, ['mysql', 'mariadb'], true)) {
+            return false; // fallback to DB error behavior
+        }
+
+        $db = DB::getDatabaseName();
+        $pk = $this->primaryKeyName();
+
+        $rows = DB::select(
+            'SELECT k.TABLE_NAME as ref_table, k.COLUMN_NAME as ref_column, r.DELETE_RULE
+             FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
+             JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r
+               ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+            WHERE k.REFERENCED_TABLE_SCHEMA = ? AND k.REFERENCED_TABLE_NAME = ? AND k.REFERENCED_COLUMN_NAME = ?',
+            [$db, $this->selectedTable, $pk]
+        );
+
+        foreach ($rows as $r) {
+            $rule = strtoupper((string)($r->DELETE_RULE ?? ''));
+            if (in_array($rule, ['RESTRICT', 'NO ACTION', 'NO_ACTION'], true)) {
+                $count = DB::table($r->ref_table)->where($r->ref_column, $pkValue)->limit(1)->count();
+                if ($count > 0) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     protected function audit(string $action, array $context = []): void
     {
         try {
@@ -607,32 +892,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             Notification::make()->danger()->title('Tidak ada tabel yang dipilih')->send();
             return;
         }
-
-        $columns = Schema::getColumnListing($table);
-
-        return response()->streamDownload(function () use ($table, $columns) {
-            $out = fopen('php://output', 'w');
-            fputcsv($out, $columns);
-
-            DB::table($table)
-                ->orderBy($this->primaryKeyName())
-                ->chunk(500, function ($rows) use ($out, $columns) {
-                    foreach ($rows as $row) {
-                        $data = [];
-                        foreach ($columns as $col) {
-                            $val = $row->{$col} ?? null;
-                            if (is_array($val) || is_object($val)) {
-                                $val = json_encode($val);
-                            }
-                            $data[] = $val;
-                        }
-                        fputcsv($out, $data);
-                    }
-                });
-
-            fclose($out);
-        }, $table . '-' . now()->format('Ymd_His') . '.csv', [
-            'Content-Type' => 'text/csv',
-        ]);
+        return app(DynamicExportService::class)->streamCsv($table);
     }
 }

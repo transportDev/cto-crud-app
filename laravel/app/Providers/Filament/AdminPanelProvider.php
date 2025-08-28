@@ -29,7 +29,7 @@ class AdminPanelProvider extends PanelProvider
             ->path('admin')
             ->login(Login::class)  // Use custom login page
             ->brandName('CTO Panel')
-            ->brandLogo(fn () => view('filament.pages.partials.brand-logo'))
+            ->brandLogo(fn() => view('filament.pages.partials.brand-logo'))
             ->authGuard('web')
             ->colors([
                 // Telkomsel-inspired bold red

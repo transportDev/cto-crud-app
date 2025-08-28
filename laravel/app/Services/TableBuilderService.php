@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Services\Dynamic\DynamicSchemaService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -23,17 +25,17 @@ class TableBuilderService
 
         // Build a human-readable migration-like preview
         $lines = [];
-        $lines[] = "Schema::create('{$definition['table']}', function (Blueprint $"."table) {";
+        $lines[] = "Schema::create('{$definition['table']}', function (Blueprint $" . "table) {";
 
         foreach ($definition['columns'] as $col) {
             $lines[] = '    ' . $this->buildBlueprintLine($col) . ';';
         }
 
         if (!empty($definition['timestamps'])) {
-            $lines[] = '    $'."table->timestamps();";
+            $lines[] = '    $' . "table->timestamps();";
         }
         if (!empty($definition['soft_deletes'])) {
-            $lines[] = '    $'."table->softDeletes();";
+            $lines[] = '    $' . "table->softDeletes();";
         }
 
         // Indexes that are column-level unique/index are already reflected in column lines.
@@ -94,6 +96,23 @@ class TableBuilderService
             }
         });
 
+        // Bust schema cache for the new table so UI reflects columns immediately
+        try {
+            app(DynamicSchemaService::class)->invalidateTableCache($definition['table']);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
+        // Also refresh the whitelist so the new table appears in pickers immediately
+        Cache::forget('cto:tables:whitelist');
+
+        // Auto-populate meta (PK/label) for this table
+        try {
+            app(DynamicSchemaService::class)->populateMetaForTable($definition['table']);
+        } catch (\Throwable $e) {
+            // No-op: avoid breaking creation if meta table/migrations not ready
+        }
+
         // Persist metadata if metadata table exists (after successful table creation)
         if (Schema::hasTable('dynamic_tables')) {
             DB::table('dynamic_tables')->insert([
@@ -129,8 +148,30 @@ class TableBuilderService
     public static function isReserved(string $name): bool
     {
         $reserved = [
-            'select','insert','update','delete','table','from','where','and','or','join','group','order','by',
-            'create','alter','drop','index','constraint','key','primary','unique','int','varchar','text',
+            'select',
+            'insert',
+            'update',
+            'delete',
+            'table',
+            'from',
+            'where',
+            'and',
+            'or',
+            'join',
+            'group',
+            'order',
+            'by',
+            'create',
+            'alter',
+            'drop',
+            'index',
+            'constraint',
+            'key',
+            'primary',
+            'unique',
+            'int',
+            'varchar',
+            'text',
         ];
         return in_array(strtolower($name), $reserved, true);
     }
@@ -189,7 +230,7 @@ class TableBuilderService
         }
 
         // Block critical system tables by pattern
-        $blocked = ['migrations','password_resets','personal_access_tokens','failed_jobs','admin_audit_logs','dynamic_tables'];
+        $blocked = ['migrations', 'password_resets', 'personal_access_tokens', 'failed_jobs', 'admin_audit_logs', 'dynamic_tables'];
         if (in_array($name, $blocked, true)) {
             throw ValidationException::withMessages([
                 'table' => 'This table name is reserved for system use.',
@@ -200,7 +241,7 @@ class TableBuilderService
     protected function validateColumns(array $columns): void
     {
         // Ensure unique names
-        $names = array_map(fn ($c) => $c['name'] ?? '', $columns);
+        $names = array_map(fn($c) => $c['name'] ?? '', $columns);
         if (count($names) !== count(array_unique($names))) {
             throw ValidationException::withMessages([
                 'columns' => 'Duplicate column names detected.',
@@ -369,8 +410,8 @@ class TableBuilderService
 
             'json' => fn() => "\$table->json('{$name}')",
 
-            'enum' => fn() => "\$table->enum('{$name}', [" . collect($col['enum_options'] ?? [])->map(fn($v) => "'".str_replace("'", "\\'", $v)."'")->implode(', ') . "])",
-            'set' => fn() => "\$table->set('{$name}', [" . collect($col['enum_options'] ?? [])->map(fn($v) => "'".str_replace("'", "\\'", $v)."'")->implode(', ') . "])",
+            'enum' => fn() => "\$table->enum('{$name}', [" . collect($col['enum_options'] ?? [])->map(fn($v) => "'" . str_replace("'", "\\'", $v) . "'")->implode(', ') . "])",
+            'set' => fn() => "\$table->set('{$name}', [" . collect($col['enum_options'] ?? [])->map(fn($v) => "'" . str_replace("'", "\\'", $v) . "'")->implode(', ') . "])",
 
             'foreignId' => fn() => "\$table->foreignId('{$name}')",
         ];
@@ -383,14 +424,14 @@ class TableBuilderService
         }
 
         if (array_key_exists('default', $col) && $col['default'] !== null && $col['default'] !== '') {
-            $val = is_numeric($col['default']) ? $col['default'] : "'".str_replace("'", "\\'", (string)$col['default'])."'";
+            $val = is_numeric($col['default']) ? $col['default'] : "'" . str_replace("'", "\\'", (string)$col['default']) . "'";
             $chain[] = "default({$val})";
         } elseif ($type === 'boolean' && $col['default_bool'] !== null) {
             $chain[] = "default(" . ($col['default_bool'] ? 'true' : 'false') . ")";
         }
 
         if (!empty($col['comment'])) {
-            $chain[] = "comment('".str_replace("'", "\\'", $col['comment'])."')";
+            $chain[] = "comment('" . str_replace("'", "\\'", $col['comment']) . "')";
         }
 
         $line = $base();
@@ -451,11 +492,24 @@ class TableBuilderService
         $names = Schema::getTableListing();
 
         $excluded = [
-            'migrations', 'failed_jobs', 'password_reset_tokens', 'password_resets',
-            'personal_access_tokens', 'cache', 'jobs', 'job_batches', 'admin_audit_logs',
-            'dynamic_tables', 'permissions', 'roles', 'model_has_permissions', 'model_has_roles', 'role_has_permissions',
+            'migrations',
+            'failed_jobs',
+            'password_reset_tokens',
+            'password_resets',
+            'personal_access_tokens',
+            'cache',
+            'jobs',
+            'job_batches',
+            'admin_audit_logs',
+            'dynamic_tables',
+            'permissions',
+            'roles',
+            'model_has_permissions',
+            'model_has_roles',
+            'role_has_permissions',
+            'schema_changes',
         ];
 
-        return array_values(array_filter($names, fn ($t) => !in_array($t, $excluded, true)));
+        return array_values(array_filter($names, fn($t) => !in_array($t, $excluded, true)));
     }
 }
