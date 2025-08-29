@@ -18,6 +18,7 @@ class SchemaWizardServiceApplyTest extends TestCase
         parent::setUp();
 
         // Required meta table
+    Schema::dropIfExists('cto_table_meta');
         Schema::create('cto_table_meta', function (Blueprint $table) {
             $table->increments('id');
             $table->string('table_name')->unique();
@@ -29,10 +30,12 @@ class SchemaWizardServiceApplyTest extends TestCase
         });
 
         // Target and reference tables
+    Schema::dropIfExists('posts');
         Schema::create('posts', function (Blueprint $table) {
             $table->increments('id');
             $table->string('title')->nullable();
         });
+    Schema::dropIfExists('vendors');
         Schema::create('vendors', function (Blueprint $table) {
             $table->increments('id');
             $table->string('vendor_code');

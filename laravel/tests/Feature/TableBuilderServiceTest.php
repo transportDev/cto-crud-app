@@ -35,6 +35,7 @@ class TableBuilderServiceTest extends TestCase
 
     public function test_list_user_tables_includes_created_table_and_excludes_system(): void
     {
+    Schema::dropIfExists('beta');
         Schema::create('beta', function (Blueprint $table) {
             $table->increments('id');
         });
