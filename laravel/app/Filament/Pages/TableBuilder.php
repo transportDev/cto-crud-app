@@ -99,6 +99,7 @@ class TableBuilder extends Page
                                 ->live(debounce: 500)
                                 ->rule('regex:/^[a-z][a-z0-9_]*$/')
                                 ->validationMessages([
+                                    'required' => 'Nama tabel wajib diisi',
                                     'regex' => __('table-builder.table_name_validation'),
                                 ])
                                 ->rule(function () {
@@ -277,7 +278,6 @@ class TableBuilder extends Page
                         ]),
                 ])
                     ->id('table-builder-wizard')
-                    ->skippable()
                     ->persistStepInQueryString()
                     ->columnSpanFull(),
             ])
@@ -286,6 +286,25 @@ class TableBuilder extends Page
 
     public function handleWizardStepChanged($step): void
     {
+        // Validate current step before allowing progression
+        if ($this->currentStep === 0 && $step > 0) {
+            // Validate table info step
+            $data = $this->form->getState();
+
+            if (empty($data['table'] ?? null)) {
+                // Show validation error and prevent step change
+                Notification::make()
+                    ->title('Validasi Gagal')
+                    ->body('Nama tabel wajib diisi')
+                    ->danger()
+                    ->send();
+
+                // Reset to current step to prevent progression
+                $this->dispatch('wizard-step-changed', ['step' => 0]);
+                return;
+            }
+        }
+
         $this->currentStep = $step;
 
         // Auto-generate preview when reaching the preview step (step 4, 0-indexed as 3)
