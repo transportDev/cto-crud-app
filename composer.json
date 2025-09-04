@@ -1,0 +1,5 @@
+{
+    "require": {
+        "arielmejiadev/larapex-charts": "^6.0"
+    }
+}
