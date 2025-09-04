@@ -284,6 +284,11 @@ jobs:
           DB_USERNAME=${{ secrets.DB_USERNAME }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           DB_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWORD }}
+          DB2_HOST=${{ secrets.DB2_HOST }}
+          DB2_PORT=3306 
+          DB2_DATABASE=${{ secrets.DB2_DATABASE }}
+          DB2_USERNAME=${{ secrets.DB2_USERNAME }}
+          DB2_PASSWORD=${{ secrets.DB2_PASSWORD }}
 
           CACHE_DRIVER=file
           QUEUE_CONNECTION=database
