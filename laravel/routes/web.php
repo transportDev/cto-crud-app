@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
+use App\Http\Controllers\DashboardController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -11,3 +12,5 @@ Route::get('/test-auth', function () {
     Auth::login($user);
     return Auth::check() ? 'Logged in: ' . Auth::user()->name : 'Not logged in';
 });
+
+Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
