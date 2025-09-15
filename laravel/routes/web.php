@@ -14,3 +14,5 @@ Route::get('/test-auth', function () {
 });
 
 Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+Route::get('/api/capacity', [DashboardController::class, 'capacity'])->name('dashboard.capacity');
+Route::get('/api/traffic', [DashboardController::class, 'traffic'])->name('dashboard.traffic');
