@@ -25,6 +25,14 @@
             /* red */
             --accent-600: #e6362c;
             --grid: #2a2f36;
+            --warn: #f59e0b;
+            --warn-bg: rgba(245, 158, 11, 0.15);
+            --crit: #ef4444;
+            --crit-bg: rgba(239, 68, 68, 0.18);
+            --ok: #10b981;
+            --ok-bg: rgba(16, 185, 129, 0.15);
+            --row-alt: rgba(255, 255, 255, 0.025);
+            --row-hover: rgba(255, 255, 255, 0.06);
         }
 
         @media (prefers-color-scheme: light) {
@@ -35,6 +43,11 @@
                 --text: #0f172a;
                 --muted: #475569;
                 --grid: #e5e7eb;
+                --warn-bg: rgba(245, 158, 11, 0.18);
+                --crit-bg: rgba(239, 68, 68, 0.20);
+                --ok-bg: rgba(16, 185, 129, 0.20);
+                --row-alt: rgba(0, 0, 0, 0.035);
+                --row-hover: rgba(0, 0, 0, 0.08);
             }
         }
 
@@ -126,6 +139,120 @@
             to {
                 transform: rotate(360deg);
             }
+        }
+
+        /* Capacity table enhancements */
+        .cap-table-wrapper {
+            max-height: 640px;
+            overflow: auto;
+        }
+
+        .cap-table thead th {
+            position: sticky;
+            top: 0;
+            background: var(--panel);
+            z-index: 5;
+            box-shadow: 0 1px 0 var(--panel-border);
+        }
+
+        .cap-table tbody tr:nth-child(even) {
+            background: var(--row-alt);
+        }
+
+        .cap-table tbody tr:hover {
+            background: var(--row-hover);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: .25px;
+            padding: 2px 6px 3px;
+            border-radius: 999px;
+            line-height: 1;
+            text-transform: uppercase;
+        }
+
+        .status-critical {
+            background: var(--crit-bg);
+            color: var(--crit);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+        }
+
+        .status-warning {
+            background: var(--warn-bg);
+            color: var(--warn);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+        }
+
+        .status-normal {
+            background: var(--ok-bg);
+            color: var(--ok);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+        }
+
+        .pct-chip {
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 8px;
+            display: inline-block;
+        }
+
+        .pct-critical {
+            background: var(--crit-bg);
+            color: var(--crit);
+        }
+
+        .pct-warning {
+            background: var(--warn-bg);
+            color: var(--warn);
+        }
+
+        .pct-normal {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text);
+        }
+
+        .order-badge {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 10px 3px;
+            border-radius: 999px;
+            display: inline-block;
+            white-space: nowrap;
+        }
+
+        .order-none {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--muted);
+        }
+
+        .order-has {
+            background: linear-gradient(90deg, var(--crit) 0%, var(--warn) 100%);
+            color: #fff;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .text-left {
+            text-align: left;
+        }
+
+        .truncate {
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .cursor-pointer {
+            cursor: pointer;
         }
     </style>
 
@@ -227,7 +354,15 @@
                     boundaryGap: false,
                     axisLabel: {
                         color: axisColor,
-                        formatter: (val) => (currentRange <= 24 * oneHour) ? fmtHourLabel(val).split(' ')[0] + ' ' + fmtHourLabel(val).split(' ').slice(1).join(' ').slice(-5) : fmtDayLabel(val)
+                        formatter: (val) => {
+                            if (currentRange <= 24 * oneHour) {
+                                const label = fmtHourLabel(val);
+                                const [day, month, hour] = label.split(' ');
+                                return `${day} ${month} ${hour}`;
+                            } else {
+                                return fmtDayLabel(val);
+                            }
+                        }
                     },
                     axisLine: {
                         lineStyle: {
@@ -360,10 +495,8 @@
             // When site selected, fetch JSON and update chart
             async function refreshFor(siteId) {
                 loading(true);
-                const url = new URL(window.location.href);
+                const url = new URL('/api/traffic', window.location.origin);
                 if (siteId) url.searchParams.set('site_id', siteId);
-                else url.searchParams.delete('site_id');
-                url.searchParams.set('json', '1');
                 try {
                     const res = await fetch(url.toString(), {
                         headers: {
@@ -371,7 +504,12 @@
                         }
                     });
                     const data = await res.json();
-                    const newPts = (data.s1dlLabels || []).map((ts, i) => [parseTsMs(ts), (data.s1dlValues || [])[i] ?? null]).filter(p => !isNaN(p[0]));
+                    const labels = Array.isArray(data.s1dlLabels) ? data.s1dlLabels : [];
+                    const values = Array.isArray(data.s1dlValues) ? data.s1dlValues : [];
+                    const minLen = Math.min(labels.length, values.length);
+                    const newPts = labels.slice(0, minLen)
+                        .map((ts, i) => [parseTsMs(ts), values[i] ?? null])
+                        .filter(p => !isNaN(p[0]));
                     chart.setOption({
                         series: [{
                             data: newPts
@@ -379,6 +517,10 @@
                     }, {
                         lazyUpdate: true
                     });
+                    // Update globals for range helpers
+                    if (newPts.length) {
+                        points.length = 0; newPts.forEach(p => points.push(p));
+                    }
                 } finally {
                     loading(false);
                 }
@@ -392,7 +534,8 @@
                 debounceTimer = setTimeout(() => {
                     // Reflect selection in URL without reloading
                     const url = new URL(window.location.href);
-                    if (val) url.searchParams.set('site_id', val); else url.searchParams.delete('site_id');
+                    if (val) url.searchParams.set('site_id', val);
+                    else url.searchParams.delete('site_id');
                     window.history.replaceState({}, '', url);
                     refreshFor(val);
                 }, 200);
@@ -415,6 +558,134 @@
                     max: end
                 };
             }
+
+            // Capacity widget
+            const capRows = document.getElementById('capRows');
+            const capHead = document.getElementById('capHead');
+            const capSampleInfo = document.getElementById('capSampleInfo');
+            const capLoading = document.getElementById('capLoading');
+            const capPerPageEl = document.getElementById('capPerPage');
+            const capPrev = document.getElementById('capPrev');
+            const capNext = document.getElementById('capNext');
+            const capPageInfo = document.getElementById('capPageInfo');
+
+            let capAllRows = [];
+            let capPage = 1;
+
+            function renderCapPage() {
+                const per = parseInt(capPerPageEl?.value || '50', 10);
+                const total = capAllRows.length;
+                const pages = Math.max(1, Math.ceil(total / per));
+                if (capPage > pages) capPage = pages;
+                const start = (capPage - 1) * per;
+                const end = Math.min(start + per, total);
+                const view = capAllRows.slice(start, end);
+
+                function esc(str) {
+                    return String(str ?? '').replace(/[&<>"']/g, s => ({
+                        "&": "&amp;",
+                        "<": "&lt;",
+                        ">": "&gt;",
+                        "\"": "&quot;",
+                        "'": "&#39;"
+                    } [s]));
+                }
+                const rowsHtml = view.map((r, i) => {
+                    const pct = (r.avg_highest_persentase * 100);
+                    const maxPct = (r.max_highest_persentase != null ? r.max_highest_persentase * 100 : null);
+                    let pctClass = 'pct-normal';
+                    if (pct >= 98) {
+                        pctClass = 'pct-critical';
+                    } else if (pct >= 95) {
+                        pctClass = 'pct-warning';
+                    }
+                    const orderVal = (r.no_order && String(r.no_order).trim() !== '') ? esc(r.no_order) : '–';
+                    const orderBadge = (orderVal === '–') ? `<span class="order-badge order-none">–</span>` : `<span class="order-badge order-has" title="Order: ${orderVal}">${orderVal}</span>`;
+                    const jarak = (r.jarak ?? null) === null ? '–' : Number(r.jarak).toFixed(1);
+                    const pl = (r.packet_loss ?? null) === null ? '–' : Number(r.packet_loss).toFixed(2) + '%';
+                    const title = `Site ${r.site_id}\nAvg % tertinggi: ${pct.toFixed(2)}%\nMax % harian: ${maxPct == null ? '–' : maxPct.toFixed(2) + '%'}\nHari Sampel: ${r.day_count}\nAvg PL: ${pl}\nJarak: ${jarak}`;
+                    return `
+                    <tr class="cursor-pointer" title="${esc(title)}">
+                        <td class="py-1 pr-4 text-gray-500 text-right">${start + i + 1}</td>
+                        <td class="py-1 pr-4 font-medium text-left">${esc(r.site_id)}</td>
+                        <td class="py-1 pr-4 text-right"><span class="pct-chip ${pctClass}">${pct.toFixed(1)}%</span></td>
+                        <td class="py-1 pr-4 text-right">${maxPct == null ? '–' : maxPct.toFixed(1) + '%'}</td>
+                        <td class="py-1 pr-4 text-right text-gray-400">${r.day_count}</td>
+                        <td class="py-1 pr-4 text-right">${pl}</td>
+                        <td class="py-1 pr-4 text-left">${orderBadge}</td>
+                        <td class="py-1 pr-4 text-right">${jarak}</td>
+                        <td class="py-1 pr-4 text-left truncate" title="${esc(r.alpro_category ?? '')}">${esc(r.alpro_category ?? '–')}</td>
+                        <td class="py-1 pr-4 text-left truncate" title="${esc(r.alpro_type ?? '')}">${esc(r.alpro_type ?? '–')}</td>
+                    </tr>`;
+                }).join('');
+                capRows.innerHTML = rowsHtml || '<tr><td colspan="10" class="py-2 text-gray-400">Tidak ada data.</td></tr>';
+                capPageInfo.textContent = total ? `Menampilkan ${start + 1}–${end} dari ${total}` : 'Menampilkan 0–0 dari 0';
+                capPrev.disabled = capPage <= 1;
+                capNext.disabled = capPage >= pages;
+            }
+
+            async function loadCapacity() {
+                const url = new URL(window.location.origin + '/api/capacity');
+                try {
+                    if (capHead) capHead.style.display = 'none';
+                    capLoading?.classList.add('active');
+                    capRows.innerHTML = '<tr><td colspan="5" class="py-2 text-gray-400">Memuat data…</td></tr>';
+                    const res = await fetch(url.toString(), {
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    const data = await res.json();
+                    if (!data.ok) throw new Error(data.error || 'Gagal memuat');
+
+
+                    capAllRows = Array.isArray(data.rows) ? data.rows : [];
+                    capPage = 1;
+                    renderCapPage();
+                } catch (e) {
+                    function escapeHtml(str) {
+                        return String(str)
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#39;');
+                    }
+                    capRows.innerHTML = `<tr><td colspan="5" class="py-2 text-red-300">${escapeHtml(e.message)}</td></tr>`;
+                } finally {
+                    capLoading?.classList.remove('active');
+                    if (capHead) capHead.style.display = '';
+                }
+            }
+
+            // If no points embedded, kick off an initial fetch to render client-side quickly
+            (async () => {
+                const hasEmbedded = Array.isArray(state.s1dlLabels) && state.s1dlLabels.length;
+                if (!hasEmbedded) {
+                    await refreshFor(state.selectedSiteId ?? null);
+                }
+            })();
+
+            loadCapacity();
+
+            capPerPageEl?.addEventListener('change', () => {
+                capPage = 1;
+                renderCapPage();
+            });
+            capPrev?.addEventListener('click', () => {
+                if (capPage > 1) {
+                    capPage--;
+                    renderCapPage();
+                }
+            });
+            capNext?.addEventListener('click', () => {
+                const per = parseInt(capPerPageEl?.value || '50', 10);
+                const pages = Math.max(1, Math.ceil(capAllRows.length / per));
+                if (capPage < pages) {
+                    capPage++;
+                    renderCapPage();
+                }
+            });
         });
     </script>
 
@@ -452,6 +723,51 @@
             <div id="chartS1" style="height: 480px;"></div>
             <div id="chartLoading" class="loading-overlay">
                 <div class="spinner" aria-label="Loading"></div>
+            </div>
+        </div>
+
+        <div class="mt-8 card relative">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <h2 class="text-xl font-semibold">Site mendekati kapasitas downlink</h2>
+                    <p class="text-xs text-gray-400">Rata-rata harian dari rasio (trafik rata-rata / trafik puncak) selama 5 minggu terakhir.</p>
+                </div>
+            </div>
+            <div id="capSampleInfo" class="text-xs text-gray-400 mb-2 hidden"></div>
+            <div class="overflow-x-auto cap-table-wrapper">
+                <table class="min-w-full text-sm cap-table">
+                    <thead id="capHead">
+                        <tr class="text-left text-gray-400">
+                            <th class="py-2 pr-4 text-right">#</th>
+                            <th class="py-2 pr-4 text-left">Site ID</th>
+                            <th class="py-2 pr-4 text-right">Avg % tertinggi</th>
+                            <th class="py-2 pr-4 text-right">Max % Harian</th>
+                            <th class="py-2 pr-4 text-right">Jumlah Hari</th>
+                            <th class="py-2 pr-4 text-right">Avg PL (%)</th>
+                            <th class="py-2 pr-4 text-left">No Order</th>
+                            <th class="py-2 pr-4 text-right">Jarak (km)</th>
+                            <th class="py-2 pr-4 text-left">Kategori</th>
+                            <th class="py-2 pr-4 text-left">Tipe</th>
+                        </tr>
+                    </thead>
+                    <tbody id="capRows"></tbody>
+                </table>
+            </div>
+            <div class="flex items-center justify-between mt-3 text-sm">
+                <div id="capPageInfo" class="text-gray-400">Menampilkan 0–0 dari 0</div>
+                <div class="flex items-center gap-2">
+                    <label for="capPerPage" class="text-gray-400">Baris per halaman</label>
+                    <select id="capPerPage" class="select-dark">
+                        <option value="20">20</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                    </select>
+                    <button id="capPrev" class="btn-red" type="button">Sebelumnya</button>
+                    <button id="capNext" class="btn-red" type="button">Berikutnya</button>
+                </div>
+            </div>
+            <div id="capLoading" class="loading-overlay">
+                <div class="spinner" aria-label="Memuat"></div>
             </div>
         </div>
     </div>
