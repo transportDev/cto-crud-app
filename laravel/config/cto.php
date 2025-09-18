@@ -6,12 +6,13 @@ return [
 
     // Dashboard cache TTLs (seconds)
     // Time-series data is not highly time-sensitive; default 3 minutes.
-    'dashboard_series_cache_ttl' => env('CTO_DASHBOARD_SERIES_CACHE_TTL', 180),
-    // Site list can be cached longer; default 10 minutes.
-    'dashboard_sites_cache_ttl' => env('CTO_DASHBOARD_SITES_CACHE_TTL', 600),
+    'dashboard_series_cache_ttl' => env('CTO_DASHBOARD_SERIES_CACHE_TTL', 21600),
+
+    'dashboard_sites_cache_ttl' => env('CTO_DASHBOARD_SITES_CACHE_TTL', 21600),
 
     // Capacity (DL near max) widget settings
-    'capacity_cache_ttl' => env('CTO_CAPACITY_CACHE_TTL', 300), // seconds
+    'capacity_cache_ttl' => env('CTO_CAPACITY_CACHE_TTL', 21600),
+
     'capacity_weeks_default' => env('CTO_CAPACITY_WEEKS', 5),
     'capacity_threshold_default' => env('CTO_CAPACITY_THRESHOLD', 0.85),
     // Dev-only sampling via crc32(site_id) % N = 0. Set 0/null to disable.

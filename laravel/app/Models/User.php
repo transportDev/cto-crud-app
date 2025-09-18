@@ -53,8 +53,8 @@ class User extends Authenticatable implements FilamentUser
      */
     public function canAccessPanel(Panel $panel): bool
     {
-        // Restrict Filament admin panel to users with the "admin" role.
-        // Uses Spatie Permission via HasRoles trait.
-        return $this->hasRole('admin');
+        // Restrict Filament admin panel to authorized users (role or permission).
+        // Prefer permission for flexibility; keep role for backward compatibility.
+        return $this->can('access filament') || $this->hasRole('admin');
     }
 }
