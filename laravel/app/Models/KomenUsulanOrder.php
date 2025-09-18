@@ -2,13 +2,22 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class KomenUsulanOrder extends Model
 {
+    use HasFactory;
+
     protected $table = 'komen_usulan_order';
-    public $timestamps = false; // not specified in schema
-    protected $guarded = ['id'];
+    protected $primaryKey = 'id';
+    public $timestamps = false;
+
+    protected $fillable = [
+        'order_id',
+        'requestor',
+        'comment',
+    ];
 
     public function order()
     {

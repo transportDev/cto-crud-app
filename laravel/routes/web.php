@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\Dashboard\UsulanOrderDashboardController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -22,6 +23,7 @@ Route::middleware('web')->group(function () {
 // Dashboard and its APIs require authentication and appropriate permission
 Route::middleware(['auth', 'permission:view dashboard'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/dashboard/usulan-order', [UsulanOrderDashboardController::class, 'index'])->name('dashboard.usulan-order');
     Route::get('/api/capacity', [DashboardController::class, 'capacity'])->name('dashboard.capacity');
     Route::get('/api/traffic', [DashboardController::class, 'traffic'])->name('dashboard.traffic');
     Route::get('/api/capacity-trend', [DashboardController::class, 'capacityTrend'])->name('dashboard.capacityTrend');

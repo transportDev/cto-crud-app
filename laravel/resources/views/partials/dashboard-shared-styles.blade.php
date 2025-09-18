@@ -1,0 +1,1 @@
+{{-- Deprecated: dashboard styles moved to resources/css/dashboard.css and loaded via @vite. File kept intentionally empty. --}}

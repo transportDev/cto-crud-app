@@ -15,6 +15,7 @@ class DashboardController extends Controller
         $forJson = $request->wantsJson() || $request->boolean('json');
         $error = null;
         $s1dlLabels = $s1dlValues = [];
+        // Skip computing sites list on initial SSR; client will fetch via /api/traffic
         $sites = [];
         $selectedSiteId = $request->query('site_id');
 
@@ -23,7 +24,11 @@ class DashboardController extends Controller
             $table = 'etl_cell_4g_ran_huawei_kpi_hourly_agg';
 
             // Determine latest timestamp and 7d window
-            $latestTs = $conn->table($table)->max('finish_timestamp');
+            // Cache latest timestamp briefly to avoid frequent MAX() scans on a large table
+            $latestTtl = (int) config('cto.dashboard_latest_cache_ttl', 60);
+            $latestTs = Cache::remember('dash:latestTs', $latestTtl, function () use ($conn, $table) {
+                return $conn->table($table)->max('finish_timestamp');
+            });
             if ($latestTs) {
                 $latest = Carbon::parse($latestTs);
                 $since = $latest->copy()->subDays(7);
@@ -50,20 +55,7 @@ class DashboardController extends Controller
                     $s1dlLabels = $rowsDl->pluck('ts')->all();
                     $s1dlValues = $rowsDl->pluck('avg_mbps')->map(fn($v) => round((float)$v, 2))->all();
                 }
-
-                // Distinct site list (from last 24h window)
-                $sitesTtl = (int) config('cto.dashboard_sites_cache_ttl', 600);
-                $sites = Cache::remember("dash:sites:$windowKey", $sitesTtl, function () use ($conn, $table, $since, $latest) {
-                    return $conn->table($table)
-                        ->select('site_id')
-                        ->whereBetween('finish_timestamp', [$since, $latest])
-                        ->whereNotNull('site_id')
-                        ->distinct()
-                        ->orderBy('site_id')
-                        ->limit(500)
-                        ->pluck('site_id')
-                        ->all();
-                });
+                // Sites list intentionally skipped on SSR (client will populate from /api/traffic)
             } else {
                 $error = 'No data found in db2 table.';
             }
