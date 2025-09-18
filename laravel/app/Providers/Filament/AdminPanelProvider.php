@@ -27,7 +27,7 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->login(Login::class)  // Use custom login page
+            ->login() // Enable Filament login; web routes redirect /admin/login -> /login
             ->brandName('CTO Panel')
             ->brandLogo(fn() => view('filament.pages.partials.brand-logo'))
             ->authGuard('web')
@@ -56,6 +56,8 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+                // Restrict access to users with the proper permission/role
+                'permission:access filament',
             ]);
     }
 }

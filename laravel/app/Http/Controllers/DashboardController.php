@@ -12,7 +12,7 @@ class DashboardController extends Controller
 {
     public function index(Request $request)
     {
-    $forJson = $request->wantsJson() || $request->boolean('json');
+        $forJson = $request->wantsJson() || $request->boolean('json');
         $error = null;
         $s1dlLabels = $s1dlValues = [];
         $sites = [];
@@ -82,7 +82,7 @@ class DashboardController extends Controller
         ];
 
         // Support fetching data as JSON for AJAX updates
-    if ($forJson) {
+        if ($forJson) {
             return response()->json($payload);
         }
 
@@ -120,7 +120,9 @@ class DashboardController extends Controller
                 $rowsDl = Cache::remember("dash:s1dl:$windowKey:" . ($selectedSiteId ? 'site:' . $selectedSiteId : 'all'), $seriesTtl, function () use ($conn, $table, $since, $latest, $selectedSiteId) {
                     return $conn->table($table)
                         ->selectRaw('DATE_FORMAT(finish_timestamp, "%Y-%m-%d %H:00") as ts, AVG(s1_usage_dl_average_mbps) as avg_mbps')
-                        ->when($selectedSiteId, function ($q) use ($selectedSiteId) { $q->where('site_id', $selectedSiteId); })
+                        ->when($selectedSiteId, function ($q) use ($selectedSiteId) {
+                            $q->where('site_id', $selectedSiteId);
+                        })
                         ->whereBetween('finish_timestamp', [$since, $latest])
                         ->groupBy('ts')
                         ->orderBy('ts')
@@ -242,6 +244,7 @@ class DashboardController extends Controller
                     pl.packet_loss,
                     j.jarak,
                     d.no_order,
+                    d.status_order,
                     m.`Category Alpro` AS alpro_category,
                     m.`Type Alpro` AS alpro_type
                 FROM (SELECT ? AS site_id " . str_repeat(" UNION ALL SELECT ?", count($siteIds) - 1) . ") AS s
@@ -268,7 +271,7 @@ class DashboardController extends Controller
                 ) pl ON pl.site_id = s.site_id
                 LEFT JOIN db_cto.jarak_site_radio j 
                     ON j.site_id = s.site_id
-                LEFT JOIN db_cto.data_site_order_latest d 
+                LEFT JOIN db_cto.data_site_order d 
                     ON d.site_id = s.site_id
                 LEFT JOIN db_cto.masterdata m 
                     ON TRIM(m.`Site ID NE`) = TRIM(s.site_id)
@@ -283,6 +286,7 @@ class DashboardController extends Controller
                         'packet_loss'    => $cr->packet_loss ?? 0,
                         'jarak'          => $cr->jarak ?? null,
                         'no_order'       => $cr->no_order ?? null,
+                        'status_order'   => $cr->status_order ?? null,
                         'alpro_category' => $cr->alpro_category ?? null,
                         'alpro_type'     => $cr->alpro_type ?? null,
                     ];
@@ -294,6 +298,7 @@ class DashboardController extends Controller
                         'packet_loss'    => 0,
                         'jarak'          => null,
                         'no_order'       => null,
+                        'status_order'   => null,
                         'alpro_category' => null,
                         'alpro_type'     => null,
                     ]);
@@ -318,6 +323,70 @@ class DashboardController extends Controller
                 'sampleModulo' => $sampleModulo,
                 'count'        => count($rows),
                 'rows'         => $rows,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'ok'    => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    // Daily trend: count of sites with daily highest_persentase >= threshold
+    public function capacityTrend(Request $request)
+    {
+        $table = 'etl_cell_4g_ran_huawei_kpi_hourly_agg';
+        $weeks = (int) $request->input('weeks', 5);
+        $threshold = (float) $request->input('threshold', 0.85);
+        $sampling = (bool) $request->input('sampling', false);
+        $cacheTtl = (int) config('cto.dashboard_trend_cache_ttl', 600);
+
+        $samplingSql = $sampling ? " AND site_id % 10 = 0" : "";
+        $cacheKey = "capacity_trend_v1_{$weeks}_{$threshold}_" . ($sampling ? "sampled" : "full");
+
+        try {
+            $rows = Cache::remember($cacheKey, $cacheTtl, function () use ($table, $weeks, $threshold, $samplingSql) {
+                // Compute per-site per-day highest_persentase then count sites per day above threshold
+                $sql = "
+                SELECT
+                    dp.day AS day,
+                    COUNT(*) AS site_count
+                FROM (
+                    SELECT
+                        site_id,
+                        CAST(finish_timestamp AS DATE) AS day,
+                        MAX(s1_usage_dl_average_mbps / NULLIF(s1_usage_dl_maximum_mbps, 0)) AS highest_persentase
+                    FROM {$table}
+                    WHERE finish_timestamp >= CURRENT_DATE - INTERVAL ? WEEK {$samplingSql}
+                    GROUP BY site_id, CAST(finish_timestamp AS DATE)
+                ) AS dp
+                WHERE dp.highest_persentase >= ?
+                GROUP BY dp.day
+                ORDER BY dp.day ASC
+                ";
+
+                $rows = DB::connection('mysql2')->select($sql, [$weeks, $threshold]);
+                return json_decode(json_encode($rows), true);
+            });
+
+            // Prepare chart-friendly arrays
+            $labels = array_map(function ($r) {
+                // Ensure Y-m-d string
+                return isset($r['day']) ? (is_string($r['day']) ? $r['day'] : (string)$r['day']) : null;
+            }, $rows);
+            $values = array_map(function ($r) {
+                return (int) ($r['site_count'] ?? 0);
+            }, $rows);
+
+            return response()->json([
+                'ok'        => true,
+                'weeks'     => $weeks,
+                'threshold' => $threshold,
+                'sampling'  => $sampling,
+                'countDays' => count($rows),
+                'labels'    => $labels,
+                'values'    => $values,
+                'rows'      => $rows,
             ]);
         } catch (\Throwable $e) {
             return response()->json([

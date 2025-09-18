@@ -308,6 +308,24 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         // Resolve any embedded FK fields (from relation label columns) into actual FK IDs
                         $this->resolveEmbeddedForeigns($data);
 
+                        // Normalize JSON columns: Filament KeyValue returns array; ensure DB gets JSON string
+                        try {
+                            $colsMeta = app(DynamicSchemaService::class)->columns($this->selectedTable);
+                            foreach ($colsMeta as $colName => $meta) {
+                                if (($meta['type'] ?? null) === 'json' && isset($data[$colName]) && is_array($data[$colName])) {
+                                    // Remove empty placeholder rows (keys or values null/empty)
+                                    $clean = [];
+                                    foreach ($data[$colName] as $k => $v) {
+                                        if ($k === null || $k === '' || $v === '' || $v === null) continue;
+                                        $clean[$k] = $v;
+                                    }
+                                    $data[$colName] = $clean ? json_encode($clean, JSON_UNESCAPED_UNICODE) : null;
+                                }
+                            }
+                        } catch (\Throwable $e) {
+                            // Fallback: do not block creation if normalization fails
+                        }
+
                         $model = new DynamicModel();
                         $model->setRuntimeTable($this->selectedTable);
 
@@ -361,6 +379,27 @@ class DynamicCrud extends Page implements HasTable, HasForms
                         $this->stripEmbeddedForeigns($data);
 
                         $this->applySafeDefaults($data, true);
+
+                        // Normalize JSON columns on edit too
+                        try {
+                            $colsMeta = app(DynamicSchemaService::class)->columns($this->selectedTable);
+                            foreach ($colsMeta as $colName => $meta) {
+                                if (($meta['type'] ?? null) === 'json' && array_key_exists($colName, $data)) {
+                                    if (is_array($data[$colName])) {
+                                        $clean = [];
+                                        foreach ($data[$colName] as $k => $v) {
+                                            if ($k === null || $k === '' || $v === '' || $v === null) continue;
+                                            $clean[$k] = $v;
+                                        }
+                                        $data[$colName] = $clean ? json_encode($clean, JSON_UNESCAPED_UNICODE) : null;
+                                    } elseif ($data[$colName] === '') {
+                                        $data[$colName] = null; // treat empty string as null for json
+                                    }
+                                }
+                            }
+                        } catch (\Throwable $e) {
+                            // ignore normalization issues
+                        }
 
                         $record->fill($data);
                         $record->save();

@@ -30,6 +30,91 @@
 }
 
 @layer components {
+    .glass-card {
+        /* base card color using CSS variable as requested */
+        background-color: var(--carbon-black) !important;
+        /* glass overlay + subtle tint */
+        background-image: linear-gradient(
+                to bottom,
+                rgba(255, 255, 255, 0.04),
+                rgba(255, 255, 255, 0.02)
+            ),
+            radial-gradient(
+                600px 200px at 0% -20%,
+                rgba(236, 28, 36, 0.1),
+                rgba(236, 28, 36, 0) 50%
+            ),
+            radial-gradient(
+                600px 200px at 120% 120%,
+                rgba(0, 212, 255, 0.08),
+                rgba(0, 212, 255, 0) 50%
+            );
+        -webkit-backdrop-filter: blur(16px);
+        backdrop-filter: blur(16px);
+        border-radius: 1rem;
+    }
+
+    /* Glassy input shell with left icon + divider (as in reference image) */
+    .input-shell {
+        display: flex;
+        align-items: center;
+        height: 48px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(20, 20, 22, 0.6);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease,
+            background 0.2s ease;
+    }
+    .input-shell .leading-icon {
+        width: 48px;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #9aa1aa; /* muted icon */
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .input-shell .field-input {
+        flex: 1 1 auto;
+        height: 100%;
+        padding: 0 12px;
+        background: transparent;
+        border: 0;
+        color: #e5e7eb;
+    }
+    .input-shell .field-input:focus,
+    .input-shell .field-input:focus-visible {
+        outline: none;
+        box-shadow: none;
+    }
+    .input-shell .field-input::placeholder {
+        color: #9ca3af;
+    }
+    .input-shell .trailing-icon {
+        width: 44px;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #8b95a1;
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+    }
+    .input-shell:focus-within {
+        border-color: rgba(236, 28, 36, 0.6);
+        box-shadow: 0 0 0 3px rgba(236, 28, 36, 0.25);
+        background: rgba(20, 20, 22, 0.7);
+    }
+    .input-shell.has-error {
+        border-color: #dc2626; /* red-600 */
+    }
+    .input-shell.has-error .leading-icon {
+        border-right-color: rgba(220, 38, 38, 0.45);
+        color: #d97706; /* slight warning tint */
+    }
     .login-card {
         animation: floaty 6s ease-in-out infinite;
         max-height: 72vh;
