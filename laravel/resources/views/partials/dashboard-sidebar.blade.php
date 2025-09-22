@@ -8,7 +8,7 @@
         <a href="{{ route('dashboard.usulan-order') }}" class="dash-link {{ request()->routeIs('dashboard.usulan-order') ? 'active' : '' }}">Usulan Order</a>
     </nav>
     @auth
-    <div class="mt-4" id="userMenuRoot">
+    <div class="mt-6" id="userMenuRoot">
         <button type="button" id="userMenuButton" class="user-btn" aria-haspopup="true" aria-expanded="false">
             <span style="display:flex;align-items:center;gap:10px;">
                 <span class="user-avatar" aria-hidden="true">{{ strtoupper(substr(auth()->user()->name,0,1)) }}</span>

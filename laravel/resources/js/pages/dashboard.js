@@ -1,6 +1,7 @@
-// Dashboard page script: instantiate reusable charts and wire API data
+// Dashboard page script: charts enabled
 import { LineChart } from "../components/LineChart.js";
 import { PieChart } from "../components/PieChart.js";
+import { exportAoa } from "../utils/export.js";
 
 function parseDashData() {
     const el = document.getElementById("dash-data");
@@ -227,11 +228,11 @@ window.addEventListener("DOMContentLoaded", () => {
                 .join("");
     }
 
-    // Initialize charts using reusable modules
-    const trafficChart = new LineChart("trafficChart", {
+    // Charts
+    let trafficChart = new LineChart("trafficChart", {
         series: [{ name: "S1 DL rata-rata (Mbps)" }],
     });
-    const orderSummaryChart = new PieChart("orderSummaryChart", {});
+    let orderSummaryChart = new PieChart("orderSummaryChart", {});
 
     // Capacity tables init BEFORE loadCapacity()
     const capTable1 = initCapTable("1");
@@ -240,27 +241,25 @@ window.addEventListener("DOMContentLoaded", () => {
 
     // Seed traffic chart if server embedded data exists
     if (
+        trafficChart &&
         Array.isArray(state.s1dlLabels) &&
         Array.isArray(state.s1dlValues) &&
-        state.s1dlLabels.length
+        state.s1dlLabels.length === state.s1dlValues.length &&
+        state.s1dlLabels.length > 0
     ) {
-        const points = state.s1dlLabels
-            .map((ts, i) => [
-                parseTsMs(ts),
-                state.s1dlValues?.[i] != null
-                    ? Number(state.s1dlValues[i])
-                    : null,
-            ])
-            .filter((p) => !isNaN(p[0]) && p[1] != null && !isNaN(p[1]));
-        trafficChart.updateData(points);
+        const seededPoints = state.s1dlLabels.map((ts, i) => [
+            parseTsMs(ts),
+            Number(state.s1dlValues[i] ?? 0),
+        ]);
+        trafficChart.updateData(seededPoints);
     }
 
     // API helpers
     async function refreshTraffic(siteId) {
-        trafficChart.setLoading(true);
         const url = new URL("/api/traffic", window.location.origin);
         if (siteId) url.searchParams.set("site_id", siteId);
         try {
+            trafficChart?.setLoading(true);
             const res = await fetch(url.toString(), {
                 headers: { Accept: "application/json" },
             });
@@ -290,23 +289,20 @@ window.addEventListener("DOMContentLoaded", () => {
                         )
                         .join("");
             }
-            const labels = Array.isArray(data.s1dlLabels)
-                ? data.s1dlLabels
-                : [];
-            const values = Array.isArray(data.s1dlValues)
-                ? data.s1dlValues
-                : [];
-            const minLen = Math.min(labels.length, values.length);
-            const points = labels
-                .slice(0, minLen)
-                .map((ts, i) => [
+            // Update traffic chart
+            if (
+                trafficChart &&
+                Array.isArray(data.s1dlLabels) &&
+                Array.isArray(data.s1dlValues)
+            ) {
+                const pts = data.s1dlLabels.map((ts, i) => [
                     parseTsMs(ts),
-                    values[i] != null ? Number(values[i]) : null,
-                ])
-                .filter((p) => !isNaN(p[0]) && p[1] != null && !isNaN(p[1]));
-            trafficChart.updateData(points);
+                    Number(data.s1dlValues[i] ?? 0),
+                ]);
+                trafficChart.updateData(pts);
+            }
         } finally {
-            trafficChart.setLoading(false);
+            trafficChart?.setLoading(false);
         }
     }
 
@@ -327,37 +323,57 @@ window.addEventListener("DOMContentLoaded", () => {
 
             const all = Array.isArray(data.rows) ? data.rows : [];
             const group1 = all.filter((r) => r.no_order == null);
-            const group2 = all.filter(
-                (r) =>
+            const group3 = all.filter((r) => {
+                const prog = String(r.progress ?? "")
+                    .trim()
+                    .toUpperCase();
+                return r.no_order != null && prog === "5.CLOSE";
+            });
+            const group2 = all.filter((r) => {
+                const prog = String(r.progress ?? "")
+                    .trim()
+                    .toUpperCase();
+                return (
                     r.no_order != null &&
-                    (r.status_order == null ||
-                        String(r.status_order).trim() === "")
-            );
-            const group3 = all.filter(
-                (r) =>
-                    r.no_order != null &&
-                    String(r.status_order ?? "")
-                        .trim()
-                        .toLowerCase() === "done"
-            );
+                    prog !== "5.CLOSE" &&
+                    prog !== "0.DROP"
+                );
+            });
 
             capTable1.setRows(group1);
             capTable2.setRows(group2);
             capTable3.setRows(group3);
-
-            // Update order summary pie
-            orderSummaryChart.updateData([
-                { value: group1.length, name: "Belum Ada Order" },
-                { value: group3.length, name: "Order Selesai" },
-                { value: group2.length, name: "Sudah Ada (Status Kosong)" },
-            ]);
-            const total = group1.length + group2.length + group3.length;
-            orderSummaryChart.updateGraphicText(`Total\n${total}`);
         } catch (e) {
             console.error(e);
         } finally {
             capLoading?.classList.remove("active");
             capContent?.classList.remove("is-hidden");
+        }
+    }
+
+    // Order summary via API (for pie chart)
+    async function loadOrderSummary() {
+        try {
+            orderSummaryChart?.setLoading(true);
+            const url = new URL("/api/order-summary", window.location.origin);
+            const res = await fetch(url.toString(), {
+                headers: { Accept: "application/json" },
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || "Gagal memuat summary");
+            const s = data.summary || { belum: 0, onProgress: 0, done: 0 };
+            const pieData = [
+                { value: Number(s.belum || 0), name: "Belum Ada Order" },
+                { value: Number(s.onProgress || 0), name: "Order On Progress" },
+                { value: Number(s.done || 0), name: "Order Selesai" },
+            ];
+            orderSummaryChart.updateData(pieData);
+            const total = pieData.reduce((a, b) => a + (b.value || 0), 0);
+            orderSummaryChart.updateGraphicText(`Total\n${total}`);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            orderSummaryChart?.setLoading(false);
         }
     }
 
@@ -401,70 +417,15 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     async function exportExcel(fileBaseName, rows) {
-        // Try to use XLSX by lazy-loading it; if it fails, fallback to CSV
-        async function ensureXlsx() {
-            if (typeof window.XLSX !== "undefined") return true;
-            try {
-                await new Promise((resolve, reject) => {
-                    const s = document.createElement("script");
-                    s.src =
-                        "https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js";
-                    s.async = true;
-                    s.onload = () => resolve(true);
-                    s.onerror = reject;
-                    document.head.appendChild(s);
-                });
-                return typeof window.XLSX !== "undefined";
-            } catch {
-                return false;
-            }
-        }
-
-        const hasXlsx = await ensureXlsx();
-        if (hasXlsx) {
-            try {
-                const aoa = rowsToAoa(rows);
-                const wb = window.XLSX.utils.book_new();
-                const ws = window.XLSX.utils.aoa_to_sheet(aoa);
-                window.XLSX.utils.book_append_sheet(wb, ws, "Data");
-                const date = new Date().toISOString().slice(0, 10);
-                window.XLSX.writeFile(wb, `${fileBaseName}-${date}.xlsx`);
-                return;
-            } catch {
-                // fall through to CSV
-            }
-        }
-
-        // Fallback to CSV
         const aoa = rowsToAoa(rows);
-        const csv = aoa
-            .map((row) =>
-                row
-                    .map((cell) => {
-                        const s = String(cell ?? "");
-                        if (/[",\n]/.test(s))
-                            return '"' + s.replace(/"/g, '""') + '"';
-                        return s;
-                    })
-                    .join(",")
-            )
-            .join("\n");
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        const date = new Date().toISOString().slice(0, 10);
-        a.download = `${fileBaseName}-${date}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        await exportAoa(fileBaseName, aoa);
     }
 
     // Wire events
-    document
-        .getElementById("refreshPie")
-        ?.addEventListener("click", () => loadCapacity());
+    document.getElementById("refreshPie")?.addEventListener("click", () => {
+        loadCapacity();
+        loadOrderSummary();
+    });
 
     // Export buttons
     document
@@ -505,7 +466,7 @@ window.addEventListener("DOMContentLoaded", () => {
                 Array.isArray(state.s1dlLabels) && state.s1dlLabels.length;
             if (!hasEmbedded)
                 await refreshTraffic(state.selectedSiteId ?? null);
-            await Promise.allSettled([loadCapacity()]);
+            await Promise.allSettled([loadCapacity(), loadOrderSummary()]);
         } finally {
             screenLoading(false);
         }
