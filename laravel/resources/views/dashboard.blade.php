@@ -5,7 +5,6 @@
 @push('head')
 <script defer src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 {{-- XLSX is now lazy-loaded on demand in resources/js/pages/dashboard.js --}}
-@vite(['resources/js/pages/dashboard.js'])
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.ico">
 <meta name="theme-color" content="#000000">

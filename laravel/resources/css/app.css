@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Include dashboard shared styles */
+@import "./dashboard.css";
+
 :root {
     --primary-red: #ec1c24;
     --dark-red: #8b0000;

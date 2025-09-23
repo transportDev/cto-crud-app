@@ -112,7 +112,7 @@ function initCapTable(suffix) {
                 : Number(r.packet_loss).toFixed(2) + "%";
         const canCreateOrderRecord =
             r.no_order == null || String(r.no_order).trim() === "";
-    const allowCreateUi = window.canCreateOrders === true;
+        const allowCreateUi = window.canCreateOrders === true;
         const actionHtml =
             allowCreateUi && canCreateOrderRecord
                 ? `<button class="btn-ghost" type="button" title="Buat Order" onclick="openOrderModal({siteid_ne: '${esc(
@@ -204,7 +204,7 @@ function initCapTable(suffix) {
 }
 
 // Main bootstrap
-window.addEventListener("DOMContentLoaded", () => {
+function boot() {
     const state = parseDashData();
 
     // Populate Site select from embedded state (may be empty on SSR; we'll repopulate from /api/traffic)
@@ -471,4 +471,10 @@ window.addEventListener("DOMContentLoaded", () => {
             screenLoading(false);
         }
     })();
-});
+}
+
+if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", boot);
+} else {
+    boot();
+}
