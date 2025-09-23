@@ -8,7 +8,8 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\Dashboard\UsulanOrderDashboardController;
 
 Route::redirect('/', '/dashboard')->name('home');
-
+// Redirect any attempt to access Filament's default login to shared /login
+Route::redirect('/admin/login', '/login')->name('admin.login.redirect');
 
 // Shared authentication routes
 Route::middleware('web')->group(function () {
