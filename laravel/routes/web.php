@@ -8,8 +8,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\Dashboard\UsulanOrderDashboardController;
 
 Route::redirect('/', '/dashboard')->name('home');
-// Redirect any attempt to access Filament's default login to shared /login
-Route::redirect('/admin/login', '/login')->name('admin.login.redirect');
+
 
 // Shared authentication routes
 Route::middleware('web')->group(function () {
@@ -29,7 +28,10 @@ Route::middleware(['auth', 'permission:view dashboard'])->group(function () {
         ->name('dashboard.orderSummary');
     Route::get('/api/usulan-order', [UsulanOrderDashboardController::class, 'list'])
         ->name('usulanOrder.list');
-    Route::post('/api/orders', [OrderController::class, 'store'])->name('orders.store');
+    // Privileged write endpoint requires admin role in addition to being authenticated
+    Route::post('/api/orders', [OrderController::class, 'store'])
+        ->middleware('role:admin')
+        ->name('orders.store');
     Route::get('/api/order-prefill', [OrderController::class, 'prefill'])->name('orders.prefill');
     Route::get('/api/order-comments', [OrderController::class, 'comments'])->name('orders.comments');
 });

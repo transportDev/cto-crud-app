@@ -112,7 +112,7 @@ function initCapTable(suffix) {
                 : Number(r.packet_loss).toFixed(2) + "%";
         const canCreateOrderRecord =
             r.no_order == null || String(r.no_order).trim() === "";
-        const allowCreateUi = window.canCreateOrders === true;
+    const allowCreateUi = window.canCreateOrders === true;
         const actionHtml =
             allowCreateUi && canCreateOrderRecord
                 ? `<button class="btn-ghost" type="button" title="Buat Order" onclick="openOrderModal({siteid_ne: '${esc(

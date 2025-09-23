@@ -9,7 +9,7 @@
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.ico">
 <meta name="theme-color" content="#000000">
-<meta name="can-create-orders" content="{{ auth()->check() && auth()->user()->can('create orders') ? '1' : '0' }}">
+<meta name="can-create-orders" content="{{ auth()->check() && auth()->user()->hasRole('admin') ? '1' : '0' }}">
 <script>
     (function() {
         const meta = document.querySelector('meta[name="can-create-orders"]');

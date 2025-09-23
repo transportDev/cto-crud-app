@@ -13,9 +13,11 @@
             <h2 class="dash-card-title">Usulan Order</h2>
             <div class="dash-card-subtitle">Data dari tabel data_usulan_order</div>
         </div>
+        @if(auth()->check() && auth()->user()->hasRole('admin'))
         <div>
             <button id="exportUsulanOrder" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
         </div>
+        @endif
     </div>
 
 

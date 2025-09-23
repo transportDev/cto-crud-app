@@ -14,7 +14,7 @@ class UsulanOrderDashboardController extends Controller
         $perPage = (int) $request->query('perPage', 25);
         $perPage = ($perPage > 0 && $perPage <= 200) ? $perPage : 25;
 
-        $query = DataUsulanOrder::query()
+        $query = DataUsulanOrder::on('mysql3')
             ->with(['comments' => function ($q) {
                 $q->orderBy('id', 'asc');
             }])
@@ -48,7 +48,7 @@ class UsulanOrderDashboardController extends Controller
         $cacheKey = 'usulan_order:list:' . md5($q);
 
         $payload = Cache::remember($cacheKey, $ttl, function () use ($q) {
-            $query = DataUsulanOrder::query()
+            $query = DataUsulanOrder::on('mysql3')
                 ->with(['comments' => function ($q2) {
                     $q2->orderBy('id', 'asc');
                 }])
