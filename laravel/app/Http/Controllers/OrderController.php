@@ -16,11 +16,16 @@ class OrderController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        // Authorization: require a specific permission if defined
-        if ($request->user() && method_exists($request->user(), 'can')) {
-            if (!$request->user()->can('create orders')) {
-                return response()->json(['ok' => false, 'message' => 'Unauthorized'], 403);
-            }
+        // Authorization: require admin role AND specific permission
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['ok' => false, 'message' => 'Unauthorized'], 401);
+        }
+        if (method_exists($user, 'hasRole') && !$user->hasRole('admin')) {
+            return response()->json(['ok' => false, 'message' => 'Forbidden'], 403);
+        }
+        if (method_exists($user, 'can') && !$user->can('create orders')) {
+            return response()->json(['ok' => false, 'message' => 'Forbidden'], 403);
         }
         $data = $request->all();
 
@@ -59,15 +64,18 @@ class OrderController extends Controller
         $commentText = $data['comment'] ?? null;
         unset($data['comment']);
 
-        $row = DataUsulanOrder::create($data);
-
-        if ($commentText !== null && trim($commentText) !== '') {
-            KomenUsulanOrder::create([
-                'order_id' => $row->no,
-                'requestor' => $row->requestor, // or auth user name/email if preferred
-                'comment' => $commentText,
-            ]);
-        }
+        // Persist to mysql3 (db_cto) to keep data in the same source as readers
+        $row = null;
+        DB::connection('mysql3')->transaction(function () use ($data, $commentText, &$row) {
+            $row = DataUsulanOrder::on('mysql3')->create($data);
+            if ($commentText !== null && trim($commentText) !== '') {
+                KomenUsulanOrder::on('mysql3')->create([
+                    'order_id'  => $row->no,
+                    'requestor' => $row->requestor, // or auth user name/email if preferred
+                    'comment'   => $commentText,
+                ]);
+            }
+        });
 
         return response()->json([
             'ok' => true,
