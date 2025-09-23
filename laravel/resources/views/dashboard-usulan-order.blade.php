@@ -3,7 +3,6 @@
 @section('title', 'CTO Panel • Usulan Order')
 
 @push('head')
-@vite(['resources/js/pages/usulan-order.js'])
 @endpush
 
 @section('content')

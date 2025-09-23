@@ -57,7 +57,7 @@ function rowsToAoa(rows) {
     return [header, ...body];
 }
 
-window.addEventListener("DOMContentLoaded", () => {
+function boot() {
     const btn = document.getElementById("exportUsulanOrder");
     if (!btn) return;
     btn.addEventListener("click", async () => {
@@ -83,4 +83,10 @@ window.addEventListener("DOMContentLoaded", () => {
             btn.textContent = original;
         }
     });
-});
+}
+
+if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", boot);
+} else {
+    boot();
+}
