@@ -85,11 +85,11 @@ function initCapTable(suffix) {
     }
 
     function buildRowHtml(r, i) {
-        const pct = r.avg_highest_persentase * 100;
-        const maxPct =
-            r.max_highest_persentase != null
-                ? r.max_highest_persentase * 100
-                : null;
+        // New format uses s1_util (ratio 0..1) instead of avg_highest_persentase
+        const util = Number(
+            r.s1_util != null ? r.s1_util : r.avg_highest_persentase ?? 0
+        );
+        const pct = util * 100;
         let pctClass = "pct-normal";
         if (pct >= 98) pctClass = "pct-critical";
         else if (pct >= 95) pctClass = "pct-warning";
@@ -101,9 +101,6 @@ function initCapTable(suffix) {
             orderVal === "–"
                 ? `<span class="order-badge order-none">–</span>`
                 : `<span class="order-badge order-has" title="Order: ${orderVal}">${orderVal}</span>`;
-        const statusValRaw = r.status_order ?? "";
-        const statusVal =
-            String(statusValRaw).trim() === "" ? "–" : esc(statusValRaw);
         const jarak =
             (r.jarak ?? null) === null ? "–" : Number(r.jarak).toFixed(1);
         const pl =
@@ -118,7 +115,7 @@ function initCapTable(suffix) {
                 ? `<button class="btn-ghost" type="button" title="Buat Order" onclick="openOrderModal({siteid_ne: '${esc(
                       r.site_id
                   )}', site_id: '${esc(r.site_id)}', link_util: ${
-                      r.avg_highest_persentase ?? "null"
+                      util || 0
                   }, jarak_odp: ${r.jarak ?? "null"}})">Order</button>`
                 : `<span class="text-gray-400">–</span>`;
         return `
@@ -130,15 +127,11 @@ function initCapTable(suffix) {
                 <td class="py-1 pr-4 text-right"><span class="pct-chip ${pctClass}">${pct.toFixed(
             1
         )}%</span></td>
-                <td class="py-1 pr-4 text-right">${
-                    maxPct == null ? "–" : maxPct.toFixed(1) + "%"
-                }</td>
-                <td class="py-1 pr-4 text-right text-gray-400">${
-                    r.day_count
-                }</td>
                 <td class="py-1 pr-4 text-right">${pl}</td>
                 <td class="py-1 pr-4 text-left">${orderBadge}</td>
-                <td class="py-1 pr-4 text-left">${statusVal}</td>
+                <td class="py-1 pr-4 text-left">${esc(
+                    (r.progress ?? "–") || "–"
+                )}</td>
                 <td class="py-1 pr-4 text-right">${jarak}</td>
                 <td class="py-1 pr-4 text-left truncate" title="${esc(
                     r.alpro_category ?? ""
@@ -383,31 +376,28 @@ function boot() {
             "#",
             "Site ID",
             "Avg % Util Tertinggi",
-            "Max % Util Harian",
-            "Jumlah Hari",
             "Avg PL (%)",
             "No Order",
-            "Status Order",
+            "Progress",
             "Jarak (km)",
             "Kategori",
             "Tipe",
         ];
         const body = rows.map((r, idx) => {
-            const pct = (r.avg_highest_persentase ?? 0) * 100;
-            const maxPct = r.max_highest_persentase ?? null;
-            const maxPctVal = maxPct == null ? null : maxPct * 100;
+            const util = Number(
+                r.s1_util != null ? r.s1_util : r.avg_highest_persentase ?? 0
+            );
+            const pct = util * 100;
             const pl = r.packet_loss ?? null;
             return [
                 idx + 1,
                 r.site_id ?? "",
                 pct.toFixed(2) + "%",
-                maxPctVal == null ? "–" : maxPctVal.toFixed(2) + "%",
-                r.day_count ?? "",
                 pl == null ? "–" : Number(pl).toFixed(2) + "%",
                 r.no_order ?? "",
-                r.status_order == null || String(r.status_order).trim() === ""
+                r.progress == null || String(r.progress).trim() === ""
                     ? ""
-                    : String(r.status_order),
+                    : String(r.progress),
                 r.jarak == null ? "" : Number(r.jarak).toFixed(1),
                 r.alpro_category ?? "",
                 r.alpro_type ?? "",

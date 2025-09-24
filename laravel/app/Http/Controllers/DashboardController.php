@@ -154,189 +154,126 @@ class DashboardController extends Controller
 
     public function capacity(Request $request)
     {
-        $table = 'etl_cell_4g_ran_huawei_kpi_hourly_agg';
-        $weeks = (int) $request->input('weeks', 5);
         $threshold = (float) $request->input('threshold', 0.85);
-        $sampling = (bool) $request->input('sampling', false);
-        $limit = (int) $request->input('limit', 0);
-        $sampleModulo = $sampling ? 10 : null;
-        $cacheTtl = (int) config('cto.capacity_cache_ttl', 1800); // default 30 minutes
+        $limit = (int) $request->input('limit', 0); // optional, can be used later
+        $cacheTtl = (int) config('cto.capacity_cache_ttl', 1800); // 30 minutes
 
-        $samplingSql = $sampling ? " AND site_id % 10 = 0" : "";
-        // Added cache version suffix (v2) to ensure new field max_highest_persentase is populated
-        $cacheKey = "capacity_v2_{$weeks}_{$threshold}_" . ($sampling ? "sampled" : "full");
+        $cacheKey = "capacity_latest_{$threshold}";
 
         try {
-            $rows = Cache::remember($cacheKey, $cacheTtl, function () use ($table, $weeks, $threshold, $samplingSql) {
+            $rows = Cache::remember($cacheKey, $cacheTtl, function () use ($threshold) {
+
                 // -------------------------------
-                // MAIN CAPACITY QUERY (mysql2)
+                // 1. Get latest S1 utilization per site (mysql3)
                 // -------------------------------
-                $sql = "
-                SELECT
-                    dp.site_id,
-                    AVG(dp.highest_persentase) AS avg_highest_persentase,
-                    MAX(dp.highest_persentase) AS max_highest_persentase,
-                    COUNT(*) AS day_count
-                FROM (
-                    SELECT
-                        site_id,
-                        CAST(finish_timestamp AS DATE) AS day,
-                        MAX(s1_usage_dl_average_mbps / NULLIF(s1_usage_dl_maximum_mbps, 0)) AS highest_persentase
-                    FROM {$table}
-                    WHERE finish_timestamp >= CURRENT_DATE - INTERVAL ? WEEK {$samplingSql}
-                    GROUP BY site_id, CAST(finish_timestamp AS DATE)
-                ) AS dp
-                GROUP BY dp.site_id
-                HAVING AVG(dp.highest_persentase) >= ?
-                ORDER BY avg_highest_persentase DESC, dp.site_id
+                $sqlLatest = "
+                SELECT t1.site_id, t1.s1_util, t1.timestamp
+                FROM data_s1_util t1
+                INNER JOIN (
+                    SELECT site_id, MAX(timestamp) AS latest_ts
+                    FROM data_s1_util
+                    GROUP BY site_id
+                ) t2
+                ON t1.site_id = t2.site_id AND t1.timestamp = t2.latest_ts
+                WHERE t1.s1_util >= ?
+                ORDER BY t1.s1_util DESC, t1.site_id
             ";
 
-                $rows = DB::connection('mysql2')->select($sql, [$weeks, $threshold]);
-                $rows = json_decode(json_encode($rows), true);
+                $mainRows = DB::connection('mysql3')->select($sqlLatest, [$threshold]);
+                $mainRows = json_decode(json_encode($mainRows), true);
 
-                // Backward compatibility: if cached / legacy rows missing max_highest_persentase, compute it in bulk
-                if (!empty($rows) && !array_key_exists('max_highest_persentase', $rows[0])) {
-                    $siteIds = array_values(array_unique(array_column($rows, 'site_id')));
-                    if (!empty($siteIds)) {
-                        $placeholders = implode(',', array_fill(0, count($siteIds), '?'));
-                        $sqlMax = "SELECT site_id, MAX(day_max) AS max_highest_persentase FROM (
-    SELECT site_id, CAST(finish_timestamp AS DATE) AS day,
-           MAX(s1_usage_dl_average_mbps / NULLIF(s1_usage_dl_maximum_mbps,0)) AS day_max
-    FROM {$table}
-    WHERE finish_timestamp >= CURRENT_DATE - INTERVAL ? WEEK" . ($samplingSql ? str_replace(' AND', ' AND', $samplingSql) : '') . "
-    AND site_id IN ($placeholders)
-    GROUP BY site_id, CAST(finish_timestamp AS DATE)
-) t GROUP BY site_id";
-                        $bindingsMax = array_merge([$weeks], $siteIds);
-                        $maxRows = DB::connection('mysql2')->select($sqlMax, $bindingsMax);
-                        $maxMap = [];
-                        foreach ($maxRows as $mr) {
-                            $maxMap[$mr->site_id] = $mr->max_highest_persentase;
-                        }
-                        foreach ($rows as &$row) {
-                            $row['max_highest_persentase'] = $maxMap[$row['site_id']] ?? null;
-                        }
-                        unset($row);
-                    }
+                if (empty($mainRows)) {
+                    return [];
                 }
 
-                if (empty($rows)) {
-                    return $rows;
-                }
-
-                // -------------------------------
-                // COMBINED PACKET LOSS + METADATA (mysql3, db_cto) with caching
-                // -------------------------------
-                $siteIds = array_values(array_unique(array_column($rows, 'site_id')));
+                $siteIds = array_column($mainRows, 'site_id');
                 $placeholders = implode(',', array_fill(0, count($siteIds), '?'));
                 $region = config('cto.packet_loss_region', 'BALI NUSRA');
 
-                // Build enrichment cache key: capacity_enrich:{weeks}:{threshold}:{mode}:{siteSetHash}
-                // Derive mode inside this closure scope without relying on $sampling
-                $mode = trim((string) $samplingSql) !== '' ? 'sampled' : 'full';
-                $siteIdsForHash = $siteIds;
-                sort($siteIdsForHash, SORT_STRING);
-                $siteSetHash = md5(implode(',', $siteIdsForHash));
+                // -------------------------------
+                // 2. Enrich with packet loss & metadata (mysql3)
+                // -------------------------------
+                $siteSetHash = md5(implode(',', $siteIds));
                 $enrichTtl = (int) config('cto.dashboard_capacity_enrich_cache_ttl', 1800);
 
-                $combinedMap = Cache::remember("capacity_enrich:{$weeks}:{$threshold}:{$mode}:{$siteSetHash}", $enrichTtl, function () use ($siteIds, $placeholders, $region, $weeks) {
-                    $sqlCombined = "
-                SELECT 
-                    s.site_id,
-                    pl.packet_loss,
-                    j.jarak,
-                    d.no_order,
-                    d.status_order,
-                    d.progress,
-                    m.`Category Alpro` AS alpro_category,
-                    m.`Type Alpro` AS alpro_type
-                FROM (SELECT ? AS site_id " . str_repeat(" UNION ALL SELECT ?", count($siteIds) - 1) . ") AS s
-                LEFT JOIN (
-                    SELECT 
-                        site_id,
-                        AVG(avg_pl) AS packet_loss
-                    FROM (
-                        SELECT
-                            site_id,
-                            reg_name,
-                            `week`,
-                            avg_pl
-                        FROM db_cto.official_mhi_weekly_summary_thi_per_site
-                        WHERE reg_name = ?
-                          AND `week` >= (
-                                SELECT MAX(`week`) - ? 
-                                FROM db_cto.official_mhi_weekly_summary_thi_per_site
-                                WHERE reg_name = ?
-                            )
-                    ) w
-                    WHERE site_id IN ({$placeholders})
-                    GROUP BY site_id
-                ) pl ON pl.site_id = s.site_id
-                LEFT JOIN db_cto.jarak_site_radio j 
-                    ON j.site_id = s.site_id
-                LEFT JOIN db_cto.data_site_order d 
-                    ON d.site_id = s.site_id
-                LEFT JOIN db_cto.masterdata m 
-                    ON TRIM(m.`Site ID NE`) = TRIM(s.site_id)
-            ";
+                $combinedMap = Cache::remember("capacity_enrich:{$siteSetHash}", $enrichTtl, function () use ($siteIds, $placeholders, $region) {
 
-                    $bindings = array_merge($siteIds, [$region, $weeks, $region], $siteIds);
-                    $combinedRows = DB::connection('mysql3')->select($sqlCombined, $bindings);
+                    $combinedRows = DB::connection('mysql3')->select("
+                    SELECT 
+                        s.site_id,
+                        pl.packet_loss,
+                        j.jarak,
+                        d.no_order,
+                        d.status_order,
+                        d.progress,
+                        m.`Category Alpro` AS alpro_category,
+                        m.`Type Alpro` AS alpro_type
+                    FROM (SELECT ? AS site_id " . str_repeat(" UNION ALL SELECT ?", count($siteIds) - 1) . ") AS s
+                    LEFT JOIN (
+                        SELECT 
+                            site_id,
+                            AVG(avg_pl) AS packet_loss
+                        FROM (
+                            SELECT site_id, reg_name, `week`, avg_pl
+                            FROM db_cto.official_mhi_weekly_summary_thi_per_site
+                            WHERE reg_name = ?
+                        ) w
+                        WHERE site_id IN ({$placeholders})
+                        GROUP BY site_id
+                    ) pl ON pl.site_id = s.site_id
+                    LEFT JOIN db_cto.jarak_site_radio j 
+                        ON j.site_id = s.site_id
+                    LEFT JOIN db_cto.data_site_order d 
+                        ON d.site_id = s.site_id
+                    LEFT JOIN db_cto.masterdata m 
+                        ON TRIM(m.`Site ID NE`) = TRIM(s.site_id)
+                ", array_merge($siteIds, [$region], $siteIds));
 
                     $map = [];
                     foreach ($combinedRows as $cr) {
                         $map[$cr->site_id] = [
-                            'packet_loss'    => $cr->packet_loss ?? 0,
-                            'jarak'          => $cr->jarak ?? null,
-                            'no_order'       => $cr->no_order ?? null,
-                            'status_order'   => $cr->status_order ?? null,
-                            'progress'       => $cr->progress ?? null,
+                            'packet_loss' => $cr->packet_loss ?? 0,
+                            'jarak' => $cr->jarak ?? null,
+                            'no_order' => $cr->no_order ?? null,
+                            'status_order' => $cr->status_order ?? null,
+                            'progress' => $cr->progress ?? null,
                             'alpro_category' => $cr->alpro_category ?? null,
-                            'alpro_type'     => $cr->alpro_type ?? null,
+                            'alpro_type' => $cr->alpro_type ?? null,
                         ];
                     }
                     return $map;
                 });
 
-                foreach ($rows as &$row) {
+                // -------------------------------
+                // 3. Merge main rows with enrichment
+                // -------------------------------
+                foreach ($mainRows as &$row) {
                     $siteId = $row['site_id'];
-                    $row = array_merge($row, $combinedMap[$siteId] ?? [
-                        'packet_loss'    => 0,
-                        'jarak'          => null,
-                        'no_order'       => null,
-                        'status_order'   => null,
-                        'alpro_category' => null,
-                        'alpro_type'     => null,
-                    ]);
-                    // Ensure key present (in case of earlier cache misses)
-                    if (!array_key_exists('max_highest_persentase', $row)) {
-                        $row['max_highest_persentase'] = null;
-                    }
+                    $row = array_merge($row, $combinedMap[$siteId] ?? []);
                 }
                 unset($row);
 
-                return $rows;
+                return $mainRows;
             });
 
             // -------------------------------
-            // FINAL JSON RESPONSE
+            // 4. Return JSON
             // -------------------------------
             return response()->json([
-                'ok'           => true,
-                'weeks'        => $weeks,
-                'threshold'    => $threshold,
-                'limit'        => $limit,
-                'sampleModulo' => $sampleModulo,
-                'count'        => count($rows),
-                'rows'         => $rows,
+                'ok' => true,
+                'threshold' => $threshold,
+                'limit' => $limit,
+                'count' => count($rows),
+                'rows' => $rows,
             ]);
         } catch (\Throwable $e) {
             return response()->json([
-                'ok'    => false,
+                'ok' => false,
                 'error' => $e->getMessage(),
             ], 500);
         }
     }
+
 
 
 
