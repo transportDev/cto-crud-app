@@ -1,6 +1,6 @@
-@php($title = 'Sign in')
+@php($title = 'Masuk')
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 
 <head>
     <meta charset="UTF-8">
@@ -36,13 +36,13 @@
                     </div>
                     @endif
 
-                    @php($emailError = $errors->has('email'))
+                    @php($loginError = $errors->has('login'))
                     @php($passwordError = $errors->has('password'))
                     <form method="POST" action="{{ route('login.attempt') }}" class="space-y-5">
                         @csrf
                         <div>
-                            <label class="block text-sm font-medium text-zinc-300" for="email">Alamat email</label>
-                            <div class="input-shell mt-1 {{ $emailError ? 'has-error' : '' }}">
+                            <label class="block text-sm font-medium text-zinc-300" for="login">Email atau Username</label>
+                            <div class="input-shell mt-1 {{ $loginError ? 'has-error' : '' }}">
                                 <div class="leading-icon" aria-hidden="true">
                                     <!-- user icon -->
                                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -50,7 +50,7 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 20.25a8.25 8.25 0 1115 0A17.933 17.933 0 0012 18.75c-2.695 0-5.24.6-7.5 1.5z" />
                                     </svg>
                                 </div>
-                                <input id="email" name="email" type="email" required autofocus autocomplete="username" value="{{ old('email') }}" class="field-input" placeholder="you@example.com" />
+                                <input id="login" name="login" type="text" required autofocus autocomplete="username" value="{{ old('login') }}" class="field-input" placeholder="email atau nama pengguna" />
                             </div>
                         </div>
 
@@ -83,7 +83,7 @@
 
                         </div>
 
-                        <button type="submit" class="w-full inline-flex justify-center rounded-lg bg-red-600 px-4 py-3 text-white font-semibold tracking-wide shadow-lg shadow-red-900/30 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500">Sign in</button>
+                        <button type="submit" class="w-full inline-flex justify-center rounded-lg bg-red-600 px-4 py-3 text-white font-semibold tracking-wide shadow-lg shadow-red-900/30 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500">Masuk</button>
                     </form>
                 </div>
             </div>

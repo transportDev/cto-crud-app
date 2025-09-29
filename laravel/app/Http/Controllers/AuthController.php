@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -19,13 +20,19 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $credentials = $request->validate([
-            'email' => ['required', 'email'],
+            'login' => ['required', 'string', 'max:255'],
             'password' => ['required', 'string'],
         ]);
 
         $remember = $request->boolean('remember');
+        $login = trim((string) $credentials['login']);
+        $password = $credentials['password'];
 
-        if (Auth::attempt($credentials, $remember)) {
+        foreach ($this->credentialAttempts($login, $password) as $attempt) {
+            if (! Auth::attempt($attempt, $remember)) {
+                continue;
+            }
+
             $request->session()->regenerate();
 
             $user = Auth::user();
@@ -33,8 +40,53 @@ class AuthController extends Controller
         }
 
         return back()->withErrors([
-            'email' => __('auth.failed'),
-        ])->onlyInput('email');
+            'login' => __('auth.failed'),
+        ])->onlyInput('login');
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function credentialAttempts(string $login, string $password): array
+    {
+        $login = trim($login);
+
+        if ($login === '') {
+            return [];
+        }
+
+        $normalized = Str::lower($login);
+        $isEmail = filter_var($login, FILTER_VALIDATE_EMAIL) !== false;
+
+        $attempts = [];
+
+        if ($isEmail) {
+            $attempts[] = ['email' => $login, 'password' => $password];
+            if ($normalized !== $login) {
+                $attempts[] = ['email' => $normalized, 'password' => $password];
+            }
+            $attempts[] = ['username' => $normalized, 'password' => $password];
+        } else {
+            $attempts[] = ['username' => $login, 'password' => $password];
+            if ($normalized !== $login) {
+                $attempts[] = ['username' => $normalized, 'password' => $password];
+            }
+            $attempts[] = ['email' => $login, 'password' => $password];
+            if ($normalized !== $login) {
+                $attempts[] = ['email' => $normalized, 'password' => $password];
+            }
+        }
+
+        $seen = [];
+
+        return array_values(array_filter($attempts, function (array $attempt) use (&$seen) {
+            $key = json_encode($attempt);
+            if (isset($seen[$key])) {
+                return false;
+            }
+            $seen[$key] = true;
+            return true;
+        }));
     }
 
     public function logout(Request $request)
