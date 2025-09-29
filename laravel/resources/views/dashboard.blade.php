@@ -209,7 +209,7 @@
             <div class="field-grid">
                 <div class="field">
                     <label>Requestor *</label>
-                    <input name="requestor" required maxlength="100" />
+                    <input name="requestor" required maxlength="100" value="{{ auth()->user()->name ?? '' }}" />
                 </div>
                 <div class="field">
                     <label>Regional *</label>

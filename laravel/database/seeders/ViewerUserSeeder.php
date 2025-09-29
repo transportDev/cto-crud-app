@@ -20,9 +20,14 @@ class ViewerUserSeeder extends Seeder
             ['email' => $email],
             [
                 'name' => 'Viewer',
+                'username' => 'viewer',
                 'password' => Hash::make($password),
             ]
         );
+
+        if ($user->username !== 'viewer') {
+            $user->forceFill(['username' => 'viewer'])->save();
+        }
 
         if (! $user->hasRole($role)) {
             $user->assignRole($role);

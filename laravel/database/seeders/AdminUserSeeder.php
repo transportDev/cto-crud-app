@@ -22,9 +22,14 @@ class AdminUserSeeder extends Seeder
             ['email' => $email],
             [
                 'name' => 'Admin',
+                'username' => 'admin',
                 'password' => Hash::make($password),
             ]
         );
+
+        if ($user->username !== 'admin') {
+            $user->forceFill(['username' => 'admin'])->save();
+        }
 
         if (!$user->hasRole($role)) {
             $user->assignRole($role);
