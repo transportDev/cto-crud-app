@@ -45,6 +45,7 @@ body {
     color: var(--text);
     font-family: Poppins, ui-sans-serif, system-ui, -apple-system, Segoe UI,
         Roboto, sans-serif;
+    overflow-x: hidden;
 }
 
 /* Tooltip font consistency for charts */
@@ -129,6 +130,7 @@ body {
     position: relative;
     box-shadow: 0 20px 42px -8px rgba(0, 0, 0, 0.55);
     overflow-y: scroll;
+    box-sizing: border-box;
 }
 .modal-shell h2 {
     font-size: 20px;
@@ -527,6 +529,8 @@ body {
 
 /* Legacy helpers for main dashboard */
 .card {
+    width: 100%;
+    max-width: 100%;
     background: var(--panel);
     border: 1px solid var(--panel-border);
     border-radius: 16px;

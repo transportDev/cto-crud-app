@@ -21,7 +21,11 @@ class OrderController extends Controller
         if (!$user) {
             return response()->json(['ok' => false, 'message' => 'Unauthorized'], 401);
         }
-        if (method_exists($user, 'hasRole') && !$user->hasRole('admin')) {
+        if (
+            method_exists($user, 'hasAnyRole')
+            ? ! $user->hasAnyRole(['admin', 'requestor'])
+            : (method_exists($user, 'hasRole') && ! $user->hasRole('admin'))
+        ) {
             return response()->json(['ok' => false, 'message' => 'Forbidden'], 403);
         }
         if (method_exists($user, 'can') && !$user->can('create orders')) {

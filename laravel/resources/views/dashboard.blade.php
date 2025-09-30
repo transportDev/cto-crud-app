@@ -1,5 +1,7 @@
 @extends('layouts.dashboard')
 
+@php($canCreateOrders = auth()->check() && auth()->user()->can('create orders'))
+
 @section('title', 'BI Dashboard')
 
 @push('head')
@@ -8,7 +10,7 @@
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.ico">
 <meta name="theme-color" content="#000000">
-<meta name="can-create-orders" content="{{ auth()->check() && auth()->user()->hasRole('admin') ? '1' : '0' }}">
+<meta name="can-create-orders" content="{{ $canCreateOrders ? '1' : '0' }}">
 <script>
     (function() {
         const meta = document.querySelector('meta[name="can-create-orders"]');
@@ -58,11 +60,14 @@
 
 
 <div class="card mt-6 relative">
-    <div class="flex items-center justify-between mb-3">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
         <div>
             <h2 class="text-xl font-semibold">Site mendekati kapasitas downlink</h2>
             <p class="text-xs text-gray-400">Rata-rata harian dari rasio (trafik rata-rata / trafik puncak) selama 5 minggu terakhir.</p>
         </div>
+        @if($canCreateOrders)
+        <button id="manualOrderButton" type="button" class="btn-red text-sm self-start sm:self-auto">Buat Order Manual</button>
+        @endif
     </div>
 
     <div id="capContent">

@@ -17,11 +17,20 @@ class RolesAndPermissionsSeeder extends Seeder
 
         // Define roles
         $viewer = Role::firstOrCreate(['name' => 'viewer', 'guard_name' => 'web']);
+        $requestor = Role::firstOrCreate(['name' => 'requestor', 'guard_name' => 'web']);
         $admin = Role::firstOrCreate(['name' => 'admin', 'guard_name' => 'web']);
 
         // Assign permissions
         if (! $viewer->hasPermissionTo($viewDashboard)) {
             $viewer->givePermissionTo($viewDashboard);
+        }
+
+        if (! $requestor->hasPermissionTo($viewDashboard)) {
+            $requestor->givePermissionTo($viewDashboard);
+        }
+
+        if (! $requestor->hasPermissionTo($createOrders)) {
+            $requestor->givePermissionTo($createOrders);
         }
 
         $admin->syncPermissions([$viewDashboard, $accessFilament, $createOrders]);

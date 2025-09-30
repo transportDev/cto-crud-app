@@ -31,7 +31,7 @@ Route::middleware(['auth', 'permission:view dashboard'])->group(function () {
         ->name('usulanOrder.list');
     // Privileged write endpoint requires admin role in addition to being authenticated
     Route::post('/api/orders', [OrderController::class, 'store'])
-        ->middleware('role:admin')
+        ->middleware('role:admin|requestor')
         ->name('orders.store');
     Route::get('/api/order-prefill', [OrderController::class, 'prefill'])->name('orders.prefill');
     Route::get('/api/order-comments', [OrderController::class, 'comments'])->name('orders.comments');
