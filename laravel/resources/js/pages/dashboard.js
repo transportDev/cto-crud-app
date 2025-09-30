@@ -434,6 +434,14 @@ function boot() {
             exportExcel("Order-Selesai", capTable3.getRows())
         );
 
+    document
+        .getElementById("manualOrderButton")
+        ?.addEventListener("click", () => {
+            if (typeof window.openOrderModal === "function") {
+                window.openOrderModal();
+            }
+        });
+
     // Site select
     let debounceTimer;
     siteSelect?.addEventListener("change", (e) => {
