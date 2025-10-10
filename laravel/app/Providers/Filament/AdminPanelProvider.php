@@ -56,8 +56,8 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-                // Restrict access to users with the proper permission/role
-                'permission:access filament',
+                // Only allow administrators into the Filament panel
+                'role:admin',
             ]);
     }
 }

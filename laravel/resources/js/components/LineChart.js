@@ -17,6 +17,21 @@ function getThemeColors() {
     };
 }
 
+const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "Mei",
+    "Jun",
+    "Jul",
+    "Agu",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Des",
+];
+
 function deepMerge(target = {}, source = {}) {
     const out = { ...target };
     for (const [k, v] of Object.entries(source)) {
@@ -53,7 +68,7 @@ export class LineChart {
 
         const defaultOptions = {
             backgroundColor: "transparent",
-            grid: { left: 48, right: 18, top: 28, bottom: 90 },
+            grid: { left: 48, right: 18, top: 28, bottom: 98 },
             tooltip: {
                 trigger: "axis",
                 backgroundColor: this.colors.accent,
@@ -63,7 +78,42 @@ export class LineChart {
             xAxis: {
                 type: "time",
                 boundaryGap: false,
-                axisLabel: { color: this.colors.axisColor },
+                axisLabel: {
+                    color: this.colors.axisColor,
+                    margin: 14,
+                    hideOverlap: true,
+                    formatter(value) {
+                        const timestamp =
+                            typeof value === "number"
+                                ? value
+                                : new Date(value).getTime();
+                        if (!Number.isFinite(timestamp)) return "";
+                        const date = new Date(timestamp);
+                        const hours = date.getUTCHours();
+                        const minutes = date.getUTCMinutes();
+                        const hourLabel = `${String(hours).padStart(
+                            2,
+                            "0"
+                        )}:${String(minutes).padStart(2, "0")}`;
+
+                        // Show full date + time at midnight to anchor the day
+                        if (hours === 0 && minutes === 0) {
+                            const day = String(date.getUTCDate()).padStart(
+                                2,
+                                "0"
+                            );
+                            const month = monthNames[date.getUTCMonth()] ?? "";
+                            return `${day} ${month}\n${hourLabel}`;
+                        }
+
+                        // Show intermediate tick every 6 hours to reduce clutter
+                        if (minutes === 0 && hours % 6 === 0) {
+                            return hourLabel;
+                        }
+
+                        return "";
+                    },
+                },
                 axisLine: { lineStyle: { color: this.colors.gridColor } },
                 splitLine: { show: false },
             },
@@ -88,7 +138,7 @@ export class LineChart {
                     type: "slider",
                     show: true,
                     height: 48,
-                    bottom: 18,
+                    bottom: 8,
                     filterMode: "filter",
                     minValueSpan: oneHour,
                     maxValueSpan: 7 * oneDay,

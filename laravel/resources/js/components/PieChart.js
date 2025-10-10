@@ -40,28 +40,56 @@ export class PieChart {
             return;
         }
         this.colors = getThemeColors();
+        this.legendValues = {};
+        this.numberFormatter = new Intl.NumberFormat("id-ID");
         this.chart = window.echarts.init(this.element, null, {
             renderer: "canvas",
         });
 
         const defaultOptions = {
             backgroundColor: "transparent",
-            tooltip: { trigger: "item", formatter: "{b}: {c} ({d}%)" },
-            legend: { bottom: 0, textStyle: { color: this.colors.axisColor } },
+            tooltip: {
+                trigger: "item",
+                formatter: (params) =>
+                    `${params.marker} ${
+                        params.name
+                    }: ${this.numberFormatter.format(params.value)}`,
+            },
+            legend: {
+                bottom: 0,
+
+                textStyle: { color: this.colors.axisColor, fontSize: 10 },
+                formatter: (name) => this.formatLegend(name),
+            },
             graphic: [],
             series: [
                 {
                     name: "Ringkasan",
                     type: "pie",
-                    radius: ["40%", "70%"],
-                    avoidLabelOverlap: true,
+                    radius: ["42%", "65%"],
+                    avoidLabelOverlap: false,
+                    center: ["50%", "46%"],
+                    minAngle: 4,
                     itemStyle: {
                         borderRadius: 6,
                         borderColor: "#111418",
                         borderWidth: 1,
                     },
-                    label: { color: this.colors.axisColor },
-                    labelLine: { lineStyle: { color: this.colors.axisColor } },
+                    label: {
+                        show: true,
+                        color: this.colors.axisColor,
+                        position: "outside",
+                        overflow: "break",
+                        fontSize: 10,
+                        formatter: (params) => this.formatLabel(params),
+                    },
+                    labelLine: {
+                        show: true,
+                        length: 20,
+                        length2: 16,
+                        smooth: true,
+                        lineStyle: { color: this.colors.axisColor },
+                    },
                     data: [],
                 },
             ],
@@ -74,7 +102,25 @@ export class PieChart {
     updateData(data) {
         if (!this.chart) return;
         const arr = Array.isArray(data) ? data : [];
-        this.chart.setOption({ series: [{ data: arr }] }, { lazyUpdate: true });
+        const normalized = arr.map((item, idx) => {
+            const name =
+                item && typeof item.name === "string" && item.name.trim()
+                    ? item.name
+                    : `Group ${idx + 1}`;
+            const value = Number(item?.value ?? 0);
+            return { ...item, name, value };
+        });
+        this.legendValues = normalized.reduce((acc, item) => {
+            acc[item.name] = item.value ?? 0;
+            return acc;
+        }, {});
+        this.chart.setOption(
+            {
+                legend: { data: normalized.map((item) => item.name) },
+                series: [{ data: normalized }],
+            },
+            { lazyUpdate: true }
+        );
     }
 
     updateGraphicText(text) {
@@ -89,14 +135,14 @@ export class PieChart {
                     {
                         type: "text",
                         left: "center",
-                        top: "center",
+                        top: "40%",
                         style: {
                             text,
                             textAlign: "center",
                             fill,
                             fontSize: 16,
-                            fontWeight: 600,
-                            lineHeight: 20,
+                            fontWeight: 700,
+                            lineHeight: 26,
                         },
                     },
                 ],
@@ -117,5 +163,18 @@ export class PieChart {
 
     getInstance() {
         return this.chart;
+    }
+
+    formatLegend(name) {
+        const value = this.legendValues?.[name] ?? 0;
+        const formatted = this.numberFormatter.format(value);
+        return `${name} (${formatted})`;
+    }
+
+    formatLabel(params) {
+        const name = params?.name ?? "";
+        const value = Number(params?.value ?? 0);
+        const formatted = this.numberFormatter.format(value);
+        return name ? `${name}\n${formatted}` : formatted;
     }
 }

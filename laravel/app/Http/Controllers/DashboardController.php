@@ -206,6 +206,7 @@ class DashboardController extends Controller
                         d.no_order,
                         d.status_order,
                         d.progress,
+                        d.tgl_on_air,
                         m.`Category Alpro` AS alpro_category,
                         m.`Type Alpro` AS alpro_type
                     FROM (SELECT ? AS site_id " . str_repeat(" UNION ALL SELECT ?", count($siteIds) - 1) . ") AS s
@@ -236,6 +237,7 @@ class DashboardController extends Controller
                             'jarak' => $cr->jarak ?? null,
                             'no_order' => $cr->no_order ?? null,
                             'status_order' => $cr->status_order ?? null,
+                            'tgl_on_air' => $cr->tgl_on_air ?? null,
                             'progress' => $cr->progress ?? null,
                             'alpro_category' => $cr->alpro_category ?? null,
                             'alpro_type' => $cr->alpro_type ?? null,
@@ -281,45 +283,198 @@ class DashboardController extends Controller
     public function orderSummary(Request $request)
     {
         try {
-            // Determine latest date once and cache per-date summary
-            $maxRow = DB::connection('mysql3')->selectOne("SELECT MAX(DATE(date_id)) AS max_date FROM db_cto.data_site_order");
-            $maxDate = $maxRow->max_date ?? 'none';
+            // Determine latest and previous snapshot dates once, then cache the per-date summary
+            $datesRow = DB::connection('mysql3')->selectOne(<<<SQL
+                SELECT
+                    (SELECT DATE(date_id)
+                     FROM db_cto.data_site_order
+                     GROUP BY DATE(date_id)
+                     ORDER BY DATE(date_id) DESC
+                     LIMIT 1) AS latest_date,
+                    (SELECT DATE(date_id)
+                     FROM db_cto.data_site_order
+                     GROUP BY DATE(date_id)
+                     ORDER BY DATE(date_id) DESC
+                     LIMIT 1 OFFSET 1) AS prev_date
+            SQL);
+
+            $latestDate = $datesRow->latest_date ?? null;
+            $prevDate = $datesRow->prev_date ?? null;
+            $cacheKey = sprintf(
+                'order_summary:%s:%s',
+                $latestDate ?? 'none',
+                $prevDate ?? 'none'
+            );
+
             $ttl = (int) config('cto.dashboard_order_summary_cache_ttl', 3600);
 
-            $result = Cache::remember("order_summary:{$maxDate}", $ttl, function () use ($maxDate) {
-                $sql = "select 
+            $result = Cache::remember($cacheKey, $ttl, function () use ($latestDate, $prevDate) {
+                $sql = <<<'SQL'
+SELECT
     SUM(
         CASE
-            WHEN duo.cek_nim_order IS null THEN 1
+            WHEN duo.cek_nim_order IS NULL THEN 1
             ELSE 0
         END
-    ) AS `Belum ada Order`
-,
-SUM(
+    ) AS belum_ada_order_today,
+    SUM(
         CASE
-            WHEN duo.siteid_ne IS NOT null and duo.cek_nim_order IS NOT null AND dso.progress in ('5.Close') AND DATE(dso.date_id) = ?
+            WHEN duo.cek_nim_order IS NULL THEN 1
+            ELSE 0
+        END
+    ) AS belum_ada_order_yesterday,
+    COUNT(DISTINCT CASE
+        WHEN duo.siteid_ne IS NOT NULL
+         AND duo.cek_nim_order IS NOT NULL
+         AND dso.progress IN ('5.Close')
+         AND DATE(dso.date_id) = dates.latest_date
+        THEN duo.siteid_ne
+    END) AS order_done_today,
+    COUNT(DISTINCT CASE
+        WHEN duo.siteid_ne IS NOT NULL
+         AND duo.cek_nim_order IS NOT NULL
+    THEN duo.siteid_ne END)
+    -
+    COUNT(DISTINCT CASE
+        WHEN duo.siteid_ne IS NOT NULL
+         AND dso.progress IN ('5.Close')
+         AND DATE(dso.date_id) = dates.latest_date
+    THEN duo.siteid_ne END) AS order_on_progress_today,
+    COUNT(DISTINCT CASE
+        WHEN duo.siteid_ne IS NOT NULL
+         AND duo.cek_nim_order IS NOT NULL
+         AND dso.progress IN ('5.Close')
+         AND DATE(dso.date_id) = dates.prev_date
+        THEN duo.siteid_ne
+    END) AS order_done_yesterday,
+    COUNT(DISTINCT CASE
+        WHEN duo.siteid_ne IS NOT NULL
+         AND duo.cek_nim_order IS NOT NULL
+    THEN duo.siteid_ne END)
+    -
+    COUNT(DISTINCT CASE
+        WHEN duo.siteid_ne IS NOT NULL
+         AND dso.progress IN ('5.Close')
+         AND DATE(dso.date_id) = dates.prev_date
+    THEN duo.siteid_ne END) AS order_on_progress_yesterday
+FROM db_cto.data_usulan_order duo
+LEFT JOIN db_cto.data_site_order dso
+  ON duo.siteid_ne = dso.site_id
+CROSS JOIN (
+    SELECT ? AS latest_date, ? AS prev_date
+) AS dates
+SQL;
+
+                $row = DB::connection('mysql3')->selectOne($sql, [$latestDate, $prevDate]);
+                $row = $row ? (object) $row : (object) [];
+
+                $belumToday = (int) ($row->belum_ada_order_today ?? 0);
+                $belumYesterday = (int) ($row->belum_ada_order_yesterday ?? 0);
+                $doneToday = (int) ($row->order_done_today ?? 0);
+                $doneYesterday = (int) ($row->order_done_yesterday ?? 0);
+                $onProgressToday = (int) ($row->order_on_progress_today ?? 0);
+                $onProgressYesterday = (int) ($row->order_on_progress_yesterday ?? 0);
+
+                $totalUsulan = (int) DB::connection('mysql3')
+                    ->table('db_cto.data_usulan_order')
+                    ->count();
+
+                $totalToday = $belumToday + $doneToday + $onProgressToday;
+                $totalYesterday = $belumYesterday + $doneYesterday + $onProgressYesterday;
+
+                return [
+                    'belum' => $belumToday,
+                    'belumYesterday' => $belumYesterday,
+                    'done' => $doneToday,
+                    'doneYesterday' => $doneYesterday,
+                    'onProgress' => $onProgressToday,
+                    'onProgressYesterday' => $onProgressYesterday,
+                    'totalUsulan' => $totalUsulan,
+                    'totalToday' => $totalToday,
+                    'totalYesterday' => $totalYesterday,
+                    'delta' => [
+                        'belum' => $belumYesterday - $belumToday,
+                        'done' => $doneYesterday - $doneToday,
+                        'onProgress' => $onProgressYesterday - $onProgressToday,
+                        'total' => $totalYesterday - $totalToday,
+                    ],
+                    'dates' => [
+                        'latest' => $latestDate,
+                        'previous' => $prevDate,
+                    ],
+                ];
+            });
+
+            return response()->json(['ok' => true, 'summary' => $result]);
+        } catch (\Throwable $e) {
+            return response()->json(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function orderSummaryByNop(Request $request)
+    {
+        try {
+            $maxRow = DB::connection('mysql3')->selectOne("SELECT MAX(DATE(date_id)) AS max_date FROM db_cto.data_site_order");
+            $maxDate = $maxRow->max_date ?? null;
+            $cacheKeyDate = $maxDate ?? 'none';
+            $ttl = (int) config('cto.dashboard_order_summary_cache_ttl', 3600);
+
+            $rows = Cache::remember("order_summary_nop:{$cacheKeyDate}", $ttl, function () use ($maxDate) {
+                $sql = "SELECT 
+    COALESCE(duo.nop, 'Tidak diketahui') AS nop,
+    SUM(
+        CASE
+            WHEN duo.cek_nim_order IS NULL THEN 1
+            ELSE 0
+        END
+    ) AS `Belum ada Order`,
+    SUM(
+        CASE
+            WHEN duo.siteid_ne IS NOT NULL 
+             AND duo.cek_nim_order IS NOT NULL 
+             AND dso.progress IN ('5.Close') 
+             AND DATE(dso.date_id) = ?
             THEN 1
             ELSE 0
         END
-    ) AS `Order Done` ,
-    COUNT(DISTINCT CASE WHEN duo.siteid_ne IS NOT NULL and duo.cek_nim_order IS NOT null THEN duo.siteid_ne END)
+    ) AS `Order Done`,
+    COUNT(DISTINCT CASE 
+            WHEN duo.siteid_ne IS NOT NULL 
+             AND duo.cek_nim_order IS NOT NULL 
+            THEN duo.siteid_ne 
+        END)
     -
     COUNT(DISTINCT CASE
             WHEN duo.siteid_ne IS NOT NULL
              AND dso.progress IN ('5.Close')
              AND DATE(dso.date_id) = ?
-            THEN duo.siteid_ne END) AS `Order On Progress`
-from db_cto.data_usulan_order duo LEFT join db_cto.data_site_order dso on duo.siteid_ne  = dso.site_id";
+            THEN duo.siteid_ne 
+        END) AS `Order On Progress`
+FROM db_cto.data_usulan_order duo
+LEFT JOIN db_cto.data_site_order dso 
+       ON duo.siteid_ne = dso.site_id
+GROUP BY duo.nop
+ORDER BY duo.nop";
 
-                $row = DB::connection('mysql3')->selectOne($sql, [$maxDate, $maxDate]);
-                return [
-                    'belum' => (int) ($row->{"Belum ada Order"} ?? 0),
-                    'done' => (int) ($row->{"Order Done"} ?? 0),
-                    'onProgress' => (int) ($row->{"Order On Progress"} ?? 0),
-                ];
+                $bindings = [$maxDate, $maxDate];
+                $rawRows = DB::connection('mysql3')->select($sql, $bindings);
+
+                return array_map(function ($row) {
+                    $arrayRow = (array) $row;
+                    return [
+                        'nop' => (string) ($arrayRow['nop'] ?? 'Tidak diketahui'),
+                        'Belum ada Order' => (int) ($arrayRow['Belum ada Order'] ?? 0),
+                        'Order Done' => (int) ($arrayRow['Order Done'] ?? 0),
+                        'Order On Progress' => (int) ($arrayRow['Order On Progress'] ?? 0),
+                    ];
+                }, $rawRows);
             });
 
-            return response()->json(['ok' => true, 'summary' => $result]);
+            return response()->json([
+                'ok' => true,
+                'rows' => $rows,
+                'maxDate' => $maxDate,
+            ]);
         } catch (\Throwable $e) {
             return response()->json(['ok' => false, 'error' => $e->getMessage()], 500);
         }

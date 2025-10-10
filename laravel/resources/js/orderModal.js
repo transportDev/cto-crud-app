@@ -4,6 +4,15 @@
 
 (function () {
     const state = { submitting: false, prefillToken: null };
+    const DEFAULT_NOP_OPTIONS = ["DENPASAR", "KUPANG", "MATARAM", "FLORES"];
+    const DEFAULT_PROPOSE_SOLUTION_OPTIONS = [
+        "",
+        "FO TLKM",
+        "Radio IP",
+        "No need (Done Upgrade Channel 56 MHz)",
+    ];
+    const CEK_NIM_PLACEHOLDER = "Belum ada order";
+    const STATUS_ORDER_DEFAULT = "1. ~0%";
 
     function ensureShell() {
         if (document.getElementById("orderModal")) return;
@@ -12,6 +21,174 @@
 
     function qs(id) {
         return document.getElementById(id);
+    }
+
+    function normalizeTextValue(value) {
+        return String(value ?? "").trim();
+    }
+
+    function normalizeNopValue(value) {
+        return normalizeTextValue(value);
+    }
+
+    function resolveNopOptions(extra = []) {
+        const globalList = Array.isArray(window.NOP_OPTIONS)
+            ? window.NOP_OPTIONS
+            : [];
+        const merged = [...DEFAULT_NOP_OPTIONS, ...globalList, ...extra].map(
+            (item) => normalizeNopValue(item)
+        );
+        const unique = [];
+        merged.forEach((item) => {
+            if (item && !unique.includes(item)) unique.push(item);
+        });
+        return unique;
+    }
+
+    function populateNopSelect(selectedValue = "") {
+        const select = qs("nopSelect");
+        if (!select) return;
+        const normalizedSelected = normalizeNopValue(selectedValue);
+        const options = resolveNopOptions(
+            normalizedSelected ? [normalizedSelected] : []
+        );
+        const currentValue = normalizeNopValue(select.value);
+        const desiredValue = normalizedSelected || currentValue;
+        select.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Pilih NOP";
+        select.appendChild(placeholder);
+        options.forEach((item) => {
+            const opt = document.createElement("option");
+            opt.value = item;
+            opt.textContent = item;
+            select.appendChild(opt);
+        });
+        if (desiredValue) select.value = desiredValue;
+    }
+
+    function setNopValue(value) {
+        const normalized = normalizeNopValue(value);
+        populateNopSelect(normalized);
+        const select = qs("nopSelect");
+        if (!select) return;
+        if (normalized) select.value = normalized;
+        else select.value = "";
+    }
+
+    function normalizeProposeSolutionValue(value) {
+        return normalizeTextValue(value);
+    }
+
+    function resolveProposeSolutionOptions(extra = []) {
+        const globalList = Array.isArray(window.PROPOSE_SOLUTION_OPTIONS)
+            ? window.PROPOSE_SOLUTION_OPTIONS
+            : [];
+        const merged = [
+            ...DEFAULT_PROPOSE_SOLUTION_OPTIONS,
+            ...globalList,
+            ...extra,
+        ].map((item) => normalizeProposeSolutionValue(item));
+        const unique = [];
+        merged.forEach((item) => {
+            if (!unique.includes(item)) unique.push(item);
+        });
+        if (!unique.includes("")) unique.unshift("");
+        return unique;
+    }
+
+    function populateProposeSolutionSelect(selectedValue = "") {
+        const select = qs("proposeSolutionSelect");
+        if (!select) return;
+        const normalizedSelected = normalizeProposeSolutionValue(selectedValue);
+        const options = resolveProposeSolutionOptions(
+            normalizedSelected ? [normalizedSelected] : []
+        );
+        const currentValue = normalizeProposeSolutionValue(select.value);
+        const desiredValue = normalizedSelected || currentValue;
+        select.innerHTML = "";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Pilih Propose Solution";
+        select.appendChild(placeholder);
+        options
+            .filter((item) => item !== "")
+            .forEach((item) => {
+                const opt = document.createElement("option");
+                opt.value = item;
+                opt.textContent = item;
+                select.appendChild(opt);
+            });
+        select.value = desiredValue || "";
+    }
+
+    function setProposeSolutionValue(value) {
+        const normalized = normalizeProposeSolutionValue(value);
+        populateProposeSolutionSelect(normalized);
+        const select = qs("proposeSolutionSelect");
+        if (!select) return;
+        select.value = normalized || "";
+    }
+
+    function getCekNimOrderInput() {
+        return (
+            qs("cekNimOrderInput") ||
+            (qs("orderForm")?.elements["cek_nim_order"] ?? null)
+        );
+    }
+
+    function getStatusOrderInput() {
+        return (
+            qs("statusOrderInput") ||
+            (qs("orderForm")?.elements["status_order"] ?? null)
+        );
+    }
+
+    function setCekNimOrderValue(value) {
+        const input = getCekNimOrderInput();
+        if (!input) return;
+        const placeholder = input.dataset.placeholder || CEK_NIM_PLACEHOLDER;
+        const normalized = normalizeTextValue(value);
+        if (normalized) {
+            input.value = normalized;
+            input.dataset.actualValue = normalized;
+            input.dataset.placeholderShown = "0";
+        } else {
+            input.value = placeholder;
+            input.dataset.actualValue = "";
+            input.dataset.placeholderShown = "1";
+        }
+        input.placeholder = placeholder;
+        input.disabled = true;
+        input.classList.toggle(
+            "is-placeholder",
+            input.dataset.actualValue === ""
+        );
+    }
+
+    function setStatusOrderValue(value) {
+        const input = getStatusOrderInput();
+        if (!input) return;
+        const defaultValue = input.dataset.defaultValue || STATUS_ORDER_DEFAULT;
+        let normalized = "";
+        if (value === true) normalized = "true";
+        else if (value === false || value == null) normalized = "";
+        else normalized = normalizeTextValue(value);
+        const finalValue = normalized || defaultValue;
+        input.value = finalValue;
+        input.dataset.actualValue = finalValue;
+        input.dataset.defaultValue = defaultValue;
+        input.disabled = true;
+        input.classList.remove("is-placeholder");
+    }
+
+    function isFormControl(el) {
+        return (
+            el instanceof HTMLInputElement ||
+            el instanceof HTMLTextAreaElement ||
+            el instanceof HTMLSelectElement
+        );
     }
 
     function toast(msg, type = "success") {
@@ -73,10 +250,7 @@
             form.reset();
         } else {
             for (const el of form.elements) {
-                if (
-                    el instanceof HTMLInputElement ||
-                    el instanceof HTMLTextAreaElement
-                ) {
+                if (isFormControl(el)) {
                     if (el.type === "checkbox" || el.type === "radio")
                         el.checked = false;
                     else el.value = "";
@@ -85,12 +259,16 @@
         }
         // Ensure all controls are enabled (in case a previous load left them disabled)
         for (const el of form.elements) {
-            if (
-                el instanceof HTMLInputElement ||
-                el instanceof HTMLTextAreaElement
-            )
-                el.disabled = false;
+            if (isFormControl(el)) el.disabled = false;
         }
+
+        populateNopSelect();
+        if (prefill.nop != null) setNopValue(prefill.nop);
+        populateProposeSolutionSelect();
+        if (prefill.propose_solution != null)
+            setProposeSolutionValue(prefill.propose_solution);
+        setCekNimOrderValue(prefill.cek_nim_order);
+        setStatusOrderValue(prefill.status_order);
 
         // Always set siteid_ne first if provided
         if (prefill.siteid_ne && form.elements["siteid_ne"]) {
@@ -169,10 +347,7 @@
 
             const enabledEls = [];
             for (const el of form.elements) {
-                if (
-                    el instanceof HTMLInputElement ||
-                    el instanceof HTMLTextAreaElement
-                ) {
+                if (isFormControl(el)) {
                     if (!el.disabled) {
                         enabledEls.push(el);
                         el.disabled = true;
@@ -195,6 +370,29 @@
                     if (state.prefillToken === token && j.ok && j.data) {
                         Object.entries(j.data).forEach(([k, v]) => {
                             if (v == null) return;
+                            if (k === "nop") {
+                                const currentValue = normalizeNopValue(
+                                    form.elements[k]?.value
+                                );
+                                if (!currentValue) setNopValue(v);
+                                return;
+                            }
+                            if (k === "propose_solution") {
+                                const currentValue =
+                                    normalizeProposeSolutionValue(
+                                        form.elements[k]?.value
+                                    );
+                                if (!currentValue) setProposeSolutionValue(v);
+                                return;
+                            }
+                            if (k === "cek_nim_order") {
+                                setCekNimOrderValue(v);
+                                return;
+                            }
+                            if (k === "status_order") {
+                                setStatusOrderValue(v);
+                                return;
+                            }
                             const el = form.elements[k];
                             if (!el) return;
                             if (String(el.value).trim() === "") el.value = v;
@@ -231,13 +429,13 @@
         if (form) {
             if (typeof form.reset === "function") form.reset();
             for (const el of form.elements) {
-                if (
-                    el instanceof HTMLInputElement ||
-                    el instanceof HTMLTextAreaElement
-                )
-                    el.disabled = false;
+                if (isFormControl(el)) el.disabled = false;
             }
         }
+        populateNopSelect();
+        populateProposeSolutionSelect();
+        setCekNimOrderValue();
+        setStatusOrderValue();
         if (loader) loader.style.display = "none";
         if (screen) screen.classList.remove("active");
     };
@@ -260,6 +458,16 @@
         }
         try {
             const fd = new FormData(form);
+            const cekNimInput = getCekNimOrderInput();
+            if (cekNimInput) {
+                const actual = cekNimInput.dataset.actualValue ?? "";
+                fd.set("cek_nim_order", actual);
+            }
+            const statusOrderInput = getStatusOrderInput();
+            if (statusOrderInput) {
+                const actual = statusOrderInput.dataset.actualValue ?? "";
+                fd.set("status_order", actual);
+            }
             const meta = document.querySelector('meta[name="csrf-token"]');
             const csrf =
                 (meta && meta.getAttribute("content")) || fd.get("_token");
@@ -327,5 +535,9 @@
                     "";
             }
         }
+        populateNopSelect();
+        populateProposeSolutionSelect();
+        setCekNimOrderValue();
+        setStatusOrderValue();
     });
 })();

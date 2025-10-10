@@ -27,6 +27,8 @@ Route::middleware(['auth', 'permission:view dashboard'])->group(function () {
     Route::get('/api/capacity-trend', [DashboardController::class, 'capacityTrend'])->name('dashboard.capacityTrend');
     Route::get('/api/order-summary', [DashboardController::class, 'orderSummary'])
         ->name('dashboard.orderSummary');
+    Route::get('/api/order-summary-nop', [DashboardController::class, 'orderSummaryByNop'])
+        ->name('dashboard.orderSummaryNop');
     Route::get('/api/usulan-order', [UsulanOrderDashboardController::class, 'list'])
         ->name('usulanOrder.list');
     // Privileged write endpoint requires admin role in addition to being authenticated
@@ -35,4 +37,6 @@ Route::middleware(['auth', 'permission:view dashboard'])->group(function () {
         ->name('orders.store');
     Route::get('/api/order-prefill', [OrderController::class, 'prefill'])->name('orders.prefill');
     Route::get('/api/order-comments', [OrderController::class, 'comments'])->name('orders.comments');
+    Route::get('/api/order/detail/{site_id}', [OrderController::class, 'detail'])
+        ->name('orders.detail');
 });
