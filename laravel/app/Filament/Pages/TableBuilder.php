@@ -166,7 +166,7 @@ class TableBuilder extends Page
                                                 ->live()
                                                 ->options([
                                                     // strings
-                                                    'string' => 'string',
+                                                    'string' => 'varchar',
                                                     'char' => 'char',
                                                     'text' => 'text',
                                                     'mediumText' => 'mediumText',
@@ -220,8 +220,62 @@ class TableBuilder extends Page
                                             ])->default(null),
                                         ]),
                                         Grid::make(6)->schema([
-                                            Forms\Components\TextInput::make('default')->label(__('table-builder.default_value'))->visible(fn($get) => !in_array($get('type'), ['boolean'], true))->columnSpan(4),
-                                            Forms\Components\Toggle::make('default_bool')->label(__('table-builder.default_boolean'))->visible(fn($get) => $get('type') === 'boolean')->inline(false)->columnSpan(2),
+                                            // Select dropdown for Date/DateTime/Timestamp fields
+                                            Forms\Components\Select::make('default')
+                                                ->label(__('table-builder.default_value'))
+                                                ->visible(fn($get) => in_array($get('type'), ['date', 'datetime', 'timestamp'], true))
+                                                ->options(function ($get) {
+                                                    $type = $get('type');
+                                                    $baseOptions = ['' => __('table-builder.default_options.none')];
+
+                                                    if ($type === 'date') {
+                                                        return array_merge($baseOptions, [
+                                                            'CURDATE()' => 'CURDATE() - Current Date',
+                                                            'CURRENT_DATE' => 'CURRENT_DATE - Current Date',
+                                                        ]);
+                                                    } elseif (in_array($type, ['datetime', 'timestamp'])) {
+                                                        return array_merge($baseOptions, [
+                                                            'CURRENT_TIMESTAMP' => 'CURRENT_TIMESTAMP',
+                                                            'NOW()' => 'NOW() - Current Date & Time',
+                                                        ]);
+                                                    }
+                                                    return $baseOptions;
+                                                })
+                                                ->allowHtml()
+                                                ->searchable()
+                                                ->columnSpan(4)
+                                                ->placeholder(__('table-builder.default_placeholder_select'))
+                                                ->helperText(__('table-builder.default_helper_datetime')),
+
+                                            // Select dropdown for UUID/ULID fields
+                                            Forms\Components\Select::make('default')
+                                                ->label(__('table-builder.default_value'))
+                                                ->visible(fn($get) => in_array($get('type'), ['uuid', 'ulid'], true))
+                                                ->options([
+                                                    '' => __('table-builder.default_options.none'),
+                                                    'UUID()' => 'UUID() - Generate UUID',
+                                                    'ULID()' => 'ULID() - Generate ULID',
+                                                ])
+                                                ->allowHtml()
+                                                ->searchable()
+                                                ->columnSpan(4)
+                                                ->placeholder(__('table-builder.default_placeholder_select'))
+                                                ->helperText(__('table-builder.default_helper_uuid')),
+
+                                            // Text input for other field types (existing functionality)
+                                            Forms\Components\TextInput::make('default')
+                                                ->label(__('table-builder.default_value'))
+                                                ->visible(fn($get) => !in_array($get('type'), ['boolean', 'date', 'datetime', 'timestamp', 'uuid', 'ulid'], true))
+                                                ->columnSpan(4)
+                                                ->placeholder(__('table-builder.default_placeholder_text'))
+                                                ->helperText(__('table-builder.default_helper_text')),
+
+                                            // Toggle for boolean fields (existing functionality)
+                                            Forms\Components\Toggle::make('default_bool')
+                                                ->label(__('table-builder.default_boolean'))
+                                                ->visible(fn($get) => $get('type') === 'boolean')
+                                                ->inline(false)
+                                                ->columnSpan(2),
                                         ]),
                                         Grid::make(6)->schema([
                                             Forms\Components\TagsInput::make('enum_options')->label(__('table-builder.enum_options'))->placeholder(__('table-builder.enum_options_placeholder'))->visible(fn($get) => in_array($get('type'), ['enum', 'set'], true))->helperText(__('table-builder.enum_options_helper'))->columnSpan(6),
