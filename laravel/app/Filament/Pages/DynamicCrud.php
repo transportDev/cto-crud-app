@@ -48,10 +48,10 @@ class DynamicCrud extends Page implements HasTable, HasForms
     protected static ?string $navigationIcon = 'heroicon-o-list-bullet';
     protected static ?string $navigationGroup = 'Management';
     protected static ?string $navigationLabel = 'CTO CRUD';
-    protected static ?int $navigationSort = 2;
+    protected static ?int $navigationSort = 1;
     protected static string $view = 'filament.pages.dynamic-crud';
     protected static ?string $title = 'CTO CRUD';
-    protected static ?string $slug = 'crud';
+    protected static ?string $slug = '/';
 
     // Header selector form
     public ?array $config = [];
