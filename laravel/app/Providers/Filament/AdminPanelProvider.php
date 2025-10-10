@@ -27,7 +27,7 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->login() // Enable Filament login; web routes redirect /admin/login -> /login
+            ->login(false)
             ->brandName('CTO Panel')
             ->brandLogo(fn() => view('filament.pages.partials.brand-logo'))
             ->authGuard('web')
