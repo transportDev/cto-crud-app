@@ -324,7 +324,38 @@ class TableBuilderService
 
         // Default handling by type
         if (array_key_exists('default', $col) && $col['default'] !== null && $col['default'] !== '') {
-            $column->default($col['default']);
+            $defaultValue = $col['default'];
+
+            // Special handling for timestamp/datetime columns with CURRENT_TIMESTAMP or NOW()
+            $currentTimestampFunctions = ['CURRENT_TIMESTAMP', 'NOW()'];
+            if (in_array($type, ['timestamp', 'datetime']) && in_array(strtoupper($defaultValue), array_map('strtoupper', $currentTimestampFunctions))) {
+                $column->useCurrent();
+            }
+            // For date columns with CURDATE or CURRENT_DATE, use DB::raw()
+            elseif ($type === 'date') {
+                $dateFunctions = ['CURDATE()', 'CURRENT_DATE'];
+                if (in_array(strtoupper($defaultValue), array_map('strtoupper', $dateFunctions))) {
+                    $column->default(DB::raw($defaultValue));
+                } else {
+                    $column->default($defaultValue);
+                }
+            }
+            // For other SQL functions, use DB::raw()
+            else {
+                $sqlFunctions = [
+                    'CURRENT_TIME',
+                    'UUID()',
+                    'ULID()',
+                    'CURTIME()'
+                ];
+
+                if (in_array(strtoupper($defaultValue), array_map('strtoupper', $sqlFunctions))) {
+                    $column->default(DB::raw($defaultValue));
+                } else {
+                    // Regular string/numeric defaults
+                    $column->default($defaultValue);
+                }
+            }
         } elseif ($type === 'boolean' && $col['default_bool'] !== null) {
             $column->default($col['default_bool']);
         }
@@ -424,8 +455,40 @@ class TableBuilderService
         }
 
         if (array_key_exists('default', $col) && $col['default'] !== null && $col['default'] !== '') {
-            $val = is_numeric($col['default']) ? $col['default'] : "'" . str_replace("'", "\\'", (string)$col['default']) . "'";
-            $chain[] = "default({$val})";
+            $defaultValue = $col['default'];
+
+            // Special handling for timestamp/datetime columns with CURRENT_TIMESTAMP or NOW()
+            $currentTimestampFunctions = ['CURRENT_TIMESTAMP', 'NOW()'];
+            if (in_array($type, ['timestamp', 'datetime']) && in_array(strtoupper($defaultValue), array_map('strtoupper', $currentTimestampFunctions))) {
+                $chain[] = 'useCurrent()';
+            }
+            // For date columns with CURDATE or CURRENT_DATE, use DB::raw()
+            elseif ($type === 'date') {
+                $dateFunctions = ['CURDATE()', 'CURRENT_DATE'];
+                if (in_array(strtoupper($defaultValue), array_map('strtoupper', $dateFunctions))) {
+                    $chain[] = "default(DB::raw('{$defaultValue}'))";
+                } else {
+                    $val = is_numeric($defaultValue) ? $defaultValue : "'" . str_replace("'", "\\'", (string)$defaultValue) . "'";
+                    $chain[] = "default({$val})";
+                }
+            }
+            // For other SQL functions, use DB::raw()
+            else {
+                $sqlFunctions = [
+                    'CURRENT_TIME',
+                    'UUID()',
+                    'ULID()',
+                    'CURTIME()'
+                ];
+
+                if (in_array(strtoupper($defaultValue), array_map('strtoupper', $sqlFunctions))) {
+                    $chain[] = "default(DB::raw('{$defaultValue}'))";
+                } else {
+                    // Regular string/numeric defaults
+                    $val = is_numeric($defaultValue) ? $defaultValue : "'" . str_replace("'", "\\'", (string)$defaultValue) . "'";
+                    $chain[] = "default({$val})";
+                }
+            }
         } elseif ($type === 'boolean' && $col['default_bool'] !== null) {
             $chain[] = "default(" . ($col['default_bool'] ? 'true' : 'false') . ")";
         }

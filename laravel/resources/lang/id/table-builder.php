@@ -46,6 +46,11 @@ return [
     'index' => 'Indeks',
     'default_value' => 'Nilai bawaan (string/number/date)',
     'default_boolean' => 'Nilai bawaan (boolean)',
+    'default_placeholder_select' => 'Pilih nilai bawaan',
+    'default_placeholder_text' => 'Masukkan nilai bawaan',
+    'default_helper_datetime' => 'Pilih konstanta waktu yang umum digunakan atau kosongkan',
+    'default_helper_uuid' => 'Pilih fungsi generator atau kosongkan',
+    'default_helper_text' => 'Masukkan nilai bawaan atau kosongkan',
     'enum_options' => 'Opsi',
     'enum_options_helper' => 'Daftar nilai yang diizinkan untuk enum/set',
     'enum_options_placeholder' => 'Ketik opsi lalu tekan Enter',
@@ -68,6 +73,11 @@ return [
         'none' => 'tidak ada',
         'index' => 'indeks',
         'fulltext' => 'fulltext',
+    ],
+
+    // Default value options
+    'default_options' => [
+        'none' => 'Tidak ada nilai bawaan',
     ],
 
     // Preview step
