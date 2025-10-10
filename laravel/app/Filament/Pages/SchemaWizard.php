@@ -209,19 +209,11 @@ class SchemaWizard extends Page
                             'items' => $this->data['items'] ?? [],
                         ])->columnSpanFull(),
 
-                        Forms\Components\Section::make('Detail Teknis (untuk Developer)')
-                            ->collapsible()
-                            ->collapsed()
-                            ->schema([
-                                Forms\Components\View::make('filament.pages.partials.wizard-preview')->viewData([
-                                    'analysis' => $this->analysis,
-                                ]),
-                            ]),
-
                         Forms\Components\Actions::make([
-                            Forms\Components\Actions\Action::make('analyze')->label('Segarkan Pratinjau')->action('refreshAnalysis')->color('secondary'),
                             Forms\Components\Actions\Action::make('execute')->label('Terapkan Perubahan Langsung')->requiresConfirmation()->modalHeading('Terapkan perubahan skema sekarang?')->modalDescription('Perubahan akan langsung diterapkan ke database tanpa membuat file migrasi. Gunakan opsi ini untuk pembaruan cepat di lingkungan non-produksi.')->color('primary')->action('applyChanges'),
-                        ])->columnSpanFull(),
+                        ])
+                            ->columnSpanFull()
+                            ->alignment(\Filament\Support\Enums\Alignment::End),
                     ]),
             ])
                 ->live()
