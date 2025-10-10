@@ -175,6 +175,18 @@ class OrderController extends Controller
                 }
             }
 
+            // masterdata: Type Alpro (transport type) & Category Alpro (transport category)
+            $transportType = null;
+            $transportCategory = null;
+            $rowMaster = $conn->selectOne(
+                "SELECT `Type Alpro` AS type_alpro, `Category Alpro` AS category_alpro FROM masterdata WHERE `Site ID NE` = ? LIMIT 1",
+                [$siteId]
+            );
+            if ($rowMaster) {
+                $transportType = $rowMaster->type_alpro ?? null;
+                $transportCategory = $rowMaster->category_alpro ?? null;
+            }
+
             return response()->json([
                 'ok' => true,
                 'site_id' => $siteId,
@@ -186,6 +198,8 @@ class OrderController extends Controller
                     'link_owner' => $linkOwner, // LINK OWNER
                     'cek_nim_order' => $cekNim, // no_order
                     'status_order' => $statusOrder, // status_order
+                    'transport_type' => $transportType, // Type Alpro
+                    'transport_category' => $transportCategory, // Category Alpro
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -194,7 +208,48 @@ class OrderController extends Controller
     }
 
     /**
-     * List existing comments (read-only) for the latest order of a site.
+     * Fetch latest order detail information for a site from mysql2 view data_site_order_latest.
+     * GET /api/order/detail/{site_id}
+     */
+    public function detail(Request $request, string $siteId): JsonResponse
+    {
+        $siteId = trim($siteId);
+        if ($siteId === '') {
+            return response()->json(['ok' => false, 'error' => 'site_id required'], 422);
+        }
+        if (!$request->user()) {
+            return response()->json(['ok' => false, 'error' => 'Unauthorized'], 401);
+        }
+
+        try {
+            $conn = DB::connection('mysql3');
+            $detail = $conn->selectOne(
+                'SELECT `no`, `site_id`, `site_name`, `tier`, `region`, `bw_order`, `program`, `sow`, `bill_type`, `lat`, `long`, `product_type`, `no_order`, `tgl_order`, `nama_program`, `progress`, `update_progress`, `dependency`, `pic`, `target_close`, `tgl_on_air`, `aging_order`, `pl_distribution`, `pl_status`, `pl_aging`, `flatten_status`, `simpul`, `site_class`, `nop`, `priority`, `last_update`, `feedback`, `date_co`, `witel`, `status_order`, `date_id`
+                 FROM data_site_order_latest WHERE site_id = ? LIMIT 1',
+                [$siteId]
+            );
+
+            if (!$detail) {
+                return response()->json([
+                    'ok' => false,
+                    'error' => 'Data tidak ditemukan',
+                ], 404);
+            }
+
+            return response()->json([
+                'ok' => true,
+                'data' => (array) $detail,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * List existing comments (read-only) for a particular site.
      * GET /api/order-comments?site_id=...
      */
     public function comments(Request $request): JsonResponse
@@ -207,22 +262,14 @@ class OrderController extends Controller
             return response()->json(['ok' => false, 'error' => 'Unauthorized'], 401);
         }
 
-        // Find the most recent order (by primary key) for this site
-        $order = DataUsulanOrder::where('siteid_ne', $siteId)
-            ->orderByDesc('no')
-            ->first(['no']);
-
-        if (!$order) {
-            return response()->json(['ok' => true, 'data' => []]);
-        }
-
-        $comments = KomenUsulanOrder::where('order_id', $order->no)
+        // Get all comments for this site directly from mysql3
+        $comments = KomenUsulanOrder::on('mysql3')
+            ->where('siteid_ne', $siteId)
             ->orderBy('id')
-            ->get(['requestor', 'comment']);
+            ->get();
 
         return response()->json([
             'ok' => true,
-            'order_id' => $order->no,
             'data' => $comments,
         ]);
     }

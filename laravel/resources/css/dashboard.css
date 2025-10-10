@@ -82,6 +82,7 @@ body {
 }
 .screen-loading .box {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 12px;
     padding: 16px 20px;
@@ -132,6 +133,9 @@ body {
     overflow-y: scroll;
     box-sizing: border-box;
 }
+.modal-shell.modal-detail {
+    max-width: 720px;
+}
 .modal-shell h2 {
     font-size: 20px;
     font-weight: 600;
@@ -153,6 +157,45 @@ body {
 }
 .modal-close:hover {
     background: rgba(255, 255, 255, 0.16);
+}
+
+.detail-loader {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 16px;
+}
+.detail-empty {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 6px;
+}
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px 18px;
+    margin-top: 12px;
+}
+.detail-item {
+    padding: 12px 14px;
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.03);
+}
+.detail-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+.detail-value {
+    font-size: 13px;
+    color: var(--text);
+    word-break: break-word;
 }
 
 /* Form layout */
@@ -179,6 +222,22 @@ body {
     padding: 9px 11px;
     font-size: 13px;
     color: var(--text);
+}
+.field input[disabled],
+.field select[disabled],
+.field textarea[disabled] {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: rgba(229, 231, 235, 0.6);
+    cursor: not-allowed;
+}
+.field input[disabled]::placeholder,
+.field textarea[disabled]::placeholder {
+    color: rgba(229, 231, 235, 0.45);
+}
+.field input.is-placeholder[disabled] {
+    font-style: italic;
+    color: rgba(229, 231, 235, 0.55);
 }
 .field input:focus,
 .field select:focus {
@@ -604,6 +663,11 @@ body {
 .cap-table tbody tr:hover {
     background: var(--row-hover);
 }
+.cap-actions {
+    display: inline-flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
 
 /* Status and chips */
 .status-badge {
@@ -669,4 +733,243 @@ body {
     background: linear-gradient(90deg, var(--crit) 0%, var(--warn) 100%);
     color: #fff;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+}
+
+/* Chart card canvas height helper */
+.chart-card__canvas {
+    height: var(--chart-height, 420px);
+    width: 100%;
+}
+
+.dashboard-grid__chart {
+    display: flex;
+    flex-direction: column;
+    min-height: 400px;
+}
+
+.dashboard-grid__chart .card {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-grid__chart .chart-card__canvas {
+    flex: 1 1 auto;
+}
+
+/* Dashboard compact grid layout */
+.dashboard-grid {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas:
+        "kpi-total kpi-progress kpi-done"
+        "traffic donut bar"
+        "table table table";
+}
+
+.dashboard-grid__item--kpi-total {
+    grid-area: kpi-total;
+}
+.dashboard-grid__item--kpi-progress {
+    grid-area: kpi-progress;
+}
+.dashboard-grid__item--kpi-done {
+    grid-area: kpi-done;
+}
+.dashboard-grid__item--traffic {
+    grid-area: traffic;
+}
+.dashboard-grid__item--donut {
+    grid-area: donut;
+}
+.dashboard-grid__item--bar {
+    grid-area: bar;
+}
+.dashboard-grid__item--table {
+    grid-area: table;
+}
+
+.kpi-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 18px 20px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.kpi-card__label {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.45px;
+    color: var(--muted);
+    font-weight: 600;
+}
+.kpi-card__value {
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1;
+}
+.kpi-card__delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: linear-gradient(
+        135deg,
+        rgba(148, 163, 184, 0.22),
+        rgba(59, 130, 246, 0.12)
+    );
+    color: #d0dcff;
+    font-family: "Inter", "Segoe UI", sans-serif;
+    font-feature-settings: "tnum" 1, "ss01" 1;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    transition: background 220ms ease, color 220ms ease, box-shadow 220ms ease,
+        transform 220ms ease;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.14);
+    backdrop-filter: blur(7px);
+}
+.kpi-card__delta .kpi-card__delta-icon {
+    width: 23px;
+    height: 23px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    background: rgba(148, 163, 184, 0.2);
+    box-shadow: inset 0 0 6px rgba(148, 163, 184, 0.35);
+    text-shadow: 0 0 8px rgba(148, 163, 184, 0.65);
+}
+.kpi-card__delta .kpi-card__delta-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    line-height: 1;
+}
+.kpi-card__delta .kpi-card__delta-value {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+}
+.kpi-card__delta .kpi-card__delta-label {
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.6;
+    letter-spacing: 0.05em;
+    text-transform: lowercase;
+    margin-left: 2px;
+}
+.kpi-card__delta[data-trend="up"] {
+    background: linear-gradient(
+        135deg,
+        rgba(34, 197, 94, 0.28),
+        rgba(6, 182, 212, 0.2)
+    );
+    color: #d1fae5;
+    box-shadow: 0 0 18px rgba(16, 185, 129, 0.36);
+}
+.kpi-card__delta[data-trend="up"] .kpi-card__delta-icon {
+    background: rgba(16, 185, 129, 0.2);
+    box-shadow: inset 0 0 10px rgba(16, 185, 129, 0.6);
+    color: #6ee7b7;
+}
+.kpi-card__delta[data-trend="up"] .kpi-card__delta-value {
+    color: #bbf7d0;
+}
+.kpi-card__delta[data-trend="down"] {
+    background: linear-gradient(
+        135deg,
+        rgba(244, 63, 94, 0.35),
+        rgba(236, 72, 153, 0.24)
+    );
+    color: #ffe4f1;
+    box-shadow: 0 0 18px rgba(249, 113, 141, 0.32);
+}
+.kpi-card__delta[data-trend="down"] .kpi-card__delta-icon {
+    background: rgba(244, 63, 94, 0.2);
+    box-shadow: inset 0 0 10px rgba(244, 63, 94, 0.55);
+    color: #fecdd3;
+}
+.kpi-card__delta[data-trend="down"] .kpi-card__delta-value {
+    color: #fda4af;
+}
+.kpi-card__delta[data-trend="flat"] {
+    padding: 5px 12px;
+    gap: 8px;
+    background: linear-gradient(
+        135deg,
+        rgba(82, 99, 126, 0.35),
+        rgba(129, 140, 248, 0.2)
+    );
+    color: #dbeafe;
+    box-shadow: 0 0 10px rgba(148, 163, 184, 0.2);
+}
+.kpi-card__delta[data-trend="flat"] .kpi-card__delta-icon {
+    width: 21px;
+    height: 21px;
+    background: rgba(100, 116, 139, 0.32);
+    box-shadow: inset 0 0 6px rgba(129, 140, 248, 0.35);
+    color: #cbd5f5;
+    font-size: 11px;
+}
+.kpi-card__delta[data-trend="flat"] .kpi-card__delta-value {
+    color: #e2e8f0;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+}
+.kpi-card__delta.is-animating {
+    animation: deltaPulse 900ms ease;
+}
+
+@keyframes deltaPulse {
+    0% {
+        transform: translate3d(0, 0, 0) scale(0.96);
+        box-shadow: 0 0 0 rgba(59, 130, 246, 0);
+    }
+    40% {
+        transform: translate3d(0, 0, 0) scale(1.02);
+        box-shadow: 0 0 24px rgba(134, 239, 172, 0.25);
+    }
+    100% {
+        transform: translate3d(0, 0, 0) scale(1);
+        box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+    }
+}
+.kpi-card__meta {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.chart-card--compact h2 {
+    font-size: 18px;
+}
+
+@media (max-width: 1280px) {
+    .dashboard-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-areas:
+            "kpi-total kpi-progress"
+            "kpi-done donut"
+            "traffic bar"
+            "table table";
+    }
+}
+
+@media (max-width: 768px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "kpi-total"
+            "kpi-progress"
+            "kpi-done"
+            "donut"
+            "traffic"
+            "bar"
+            "table";
+    }
 }
