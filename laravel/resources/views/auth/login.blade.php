@@ -7,7 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $title }}</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
-    <script>
+    <!-- <script>
         (function() {
             try {
                 const storedTheme = localStorage.getItem('theme');
@@ -23,7 +23,7 @@
                 }
             }
         })();
-    </script>
+    </script> -->
 </head>
 
 <body class="min-h-screen flex items-center justify-center">
@@ -38,9 +38,9 @@
                 <div class="login-card glass-card relative w-full max-w-md rounded-2xl p-8 md:p-12 shadow-2xl border border-white/10">
                     <div class="absolute -inset-px rounded-2xl pointer-events-none login-card-glow"></div>
 
-                    <h1 class="text-2xl font-black text-center mb-4 text-gray-900 dark:text-gray-100">
+                    <h1 class="text-2xl font-black text-center mb-4 text-gray-100">
                         CTO PANEL</h1>
-                    <h1 class="text-xl font-semibold text-center mb-4 text-gray-900 dark:text-gray-100">
+                    <h1 class="text-xl font-semibold text-center mb-4 text-gray-100">
                         Masuk ke akun Anda</h1>
 
                     @if ($errors->any())
