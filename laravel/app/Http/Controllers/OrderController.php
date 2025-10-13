@@ -77,6 +77,7 @@ class OrderController extends Controller
                     'order_id'  => $row->no,
                     'requestor' => $row->requestor, // or auth user name/email if preferred
                     'comment'   => $commentText,
+                    'siteid_ne' => $row->siteid_ne ?? '', // Include siteid_ne from the order
                 ]);
             }
         });
