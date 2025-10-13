@@ -17,6 +17,7 @@ class KomenUsulanOrder extends Model
         'order_id',
         'requestor',
         'comment',
+        'siteid_ne',
     ];
 
     public function order()
