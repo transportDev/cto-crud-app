@@ -23,7 +23,7 @@ html,
 body {
     height: 100%;
 }
-@media (prefers-color-scheme: light) {
+/* @media (prefers-color-scheme: light) {
     :root {
         --bg: #f7f7f8;
         --panel: #ffffff;
@@ -37,7 +37,7 @@ body {
         --crit-bg: rgba(239, 68, 68, 0.2);
         --ok-bg: rgba(16, 185, 129, 0.2);
     }
-}
+} */
 
 /* Base page styling for dashboard pages */
 body {
