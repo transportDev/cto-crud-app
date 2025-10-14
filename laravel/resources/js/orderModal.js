@@ -257,16 +257,32 @@
                 }
             }
         }
-        // Ensure all controls are enabled (in case a previous load left them disabled)
+
+        // Set initial disabled state for all fields except allowed ones
+        const allowedFields = [
+            "nop",
+            "propose_solution",
+            "remark",
+            "siteid_fe",
+            "comment",
+        ];
         for (const el of form.elements) {
-            if (isFormControl(el)) el.disabled = false;
+            if (isFormControl(el) && el.name) {
+                if (!allowedFields.includes(el.name)) {
+                    el.disabled = true;
+                } else {
+                    el.disabled = false;
+                }
+            }
         }
 
         populateNopSelect();
         if (prefill.nop != null) setNopValue(prefill.nop);
+        else setNopValue(""); // Ensure NOP defaults to "Pilih NOP"
         populateProposeSolutionSelect();
         if (prefill.propose_solution != null)
             setProposeSolutionValue(prefill.propose_solution);
+        else setProposeSolutionValue(""); // Ensure Propose Solution defaults to placeholder
         setCekNimOrderValue(prefill.cek_nim_order);
         setStatusOrderValue(prefill.status_order);
 
@@ -346,9 +362,17 @@
             if (loader) loader.style.display = "flex";
 
             const enabledEls = [];
+            const allowedFields = [
+                "nop",
+                "propose_solution",
+                "remark",
+                "siteid_fe",
+                "comment",
+            ];
             for (const el of form.elements) {
                 if (isFormControl(el)) {
-                    if (!el.disabled) {
+                    // Only track elements that were enabled AND are in the allowed fields list
+                    if (!el.disabled && allowedFields.includes(el.name)) {
                         enabledEls.push(el);
                         el.disabled = true;
                     }
@@ -371,18 +395,11 @@
                         Object.entries(j.data).forEach(([k, v]) => {
                             if (v == null) return;
                             if (k === "nop") {
-                                const currentValue = normalizeNopValue(
-                                    form.elements[k]?.value
-                                );
-                                if (!currentValue) setNopValue(v);
+                                // Skip NOP - always show "Pilih NOP" by default
                                 return;
                             }
                             if (k === "propose_solution") {
-                                const currentValue =
-                                    normalizeProposeSolutionValue(
-                                        form.elements[k]?.value
-                                    );
-                                if (!currentValue) setProposeSolutionValue(v);
+                                // Skip Propose Solution - always show placeholder by default
                                 return;
                             }
                             if (k === "cek_nim_order") {
@@ -425,15 +442,26 @@
         const loader = qs("orderPrefillStatus");
         const screen = qs("screenLoading");
         if (modal) modal.classList.remove("active");
-        // Clear and unlock form on close to avoid leaked state
+        // Clear and set proper disabled state on close
         if (form) {
             if (typeof form.reset === "function") form.reset();
+            const allowedFields = [
+                "nop",
+                "propose_solution",
+                "remark",
+                "siteid_fe",
+                "comment",
+            ];
             for (const el of form.elements) {
-                if (isFormControl(el)) el.disabled = false;
+                if (isFormControl(el) && el.name) {
+                    el.disabled = !allowedFields.includes(el.name);
+                }
             }
         }
         populateNopSelect();
+        setNopValue(""); // Reset to "Pilih NOP"
         populateProposeSolutionSelect();
+        setProposeSolutionValue(""); // Reset to placeholder
         setCekNimOrderValue();
         setStatusOrderValue();
         if (loader) loader.style.display = "none";

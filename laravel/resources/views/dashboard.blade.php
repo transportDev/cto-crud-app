@@ -297,11 +297,11 @@
             <div class="field-grid">
                 <div class="field">
                     <label>Requestor *</label>
-                    <input name="requestor" required maxlength="100" value="{{ auth()->user()->name ?? '' }}" />
+                    <input name="requestor" required maxlength="100" value="{{ auth()->user()->name ?? '' }}" disabled />
                 </div>
                 <div class="field">
                     <label>Regional *</label>
-                    <input name="regional" required maxlength="50" value="7" />
+                    <input name="regional" required maxlength="50" value="7" disabled />
                 </div>
                 <div class="field">
                     <label>NOP</label>
@@ -311,36 +311,36 @@
                 </div>
                 <div class="field">
                     <label>SiteID NE</label>
-                    <input name="siteid_ne" maxlength="10" />
+                    <input name="siteid_ne" maxlength="10" disabled />
                 </div>
 
                 <div class="field">
                     <label>Transport Type</label>
-                    <input name="transport_type" maxlength="20" />
+                    <input name="transport_type" maxlength="20" disabled />
                 </div>
                 <div class="field">
                     <label>PL Status</label>
-                    <input name="pl_status" maxlength="20" />
+                    <input name="pl_status" maxlength="20" disabled />
                 </div>
                 <div class="field">
                     <label>Transport Category</label>
-                    <input name="transport_category" maxlength="20" />
+                    <input name="transport_category" maxlength="20" disabled />
                 </div>
                 <div class="field">
                     <label>PL Value</label>
-                    <input name="pl_value" maxlength="20" />
+                    <input name="pl_value" maxlength="20" disabled />
                 </div>
                 <div class="field">
                     <label>Link Capacity</label>
-                    <input name="link_capacity" type="number" />
+                    <input name="link_capacity" type="number" disabled />
                 </div>
                 <div class="field">
                     <label>Link Util (%)</label>
-                    <input name="link_util" type="number" step="0.01" />
+                    <input name="link_util" type="number" step="0.01" disabled />
                 </div>
                 <div class="field">
                     <label>Link Owner</label>
-                    <input name="link_owner" maxlength="20" />
+                    <input name="link_owner" maxlength="20" disabled />
                 </div>
                 <div class="field">
                     <label>Propose Solution</label>
@@ -351,7 +351,7 @@
 
                 <div class="field">
                     <label>Jarak ODP (km)</label>
-                    <input name="jarak_odp" type="number" step="0.01" />
+                    <input name="jarak_odp" type="number" step="0.01" disabled />
                 </div>
                 <div class="field">
                     <label>Cek NIM Order</label>
