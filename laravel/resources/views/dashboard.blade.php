@@ -143,9 +143,17 @@
         <div id="capContent" class="space-y-12">
             <!-- Tabel 1: Belum Ada Order -->
             <div class="mt-4">
-                <div class="flex items-center justify-end mb-2">
-
-                    <button id="export1" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end mb-2">
+                    <div class="flex flex-col justify-end gap-2 sm:flex-row sm:items-center sm:gap-3 w-full sm:w-auto sm:ml-auto sm:justify-end sm:text-right">
+                        <label for="capSearch1" class="text-sm text-gray-400">Cari Site ID</label>
+                        <input
+                            id="capSearch1"
+                            type="text"
+                            placeholder="Cari Site ID"
+                            class="px-3 py-2 rounded-md bg-gray-950 border border-gray-800 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                            autocomplete="off" />
+                        <button id="export1" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto cap-table-wrapper">
                     <table class="min-w-full text-sm cap-table">
@@ -184,13 +192,22 @@
 
             <!-- Tabel 2: Sudah Ada Order (Status Kosong) -->
             <div class="pt-4 border-t border-gray-800">
-                <div class="flex items-center justify-between mb-2">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-2">
                     <div>
 
                         <h2 class="text-xl font-semibold">Order Sedang On Progress</h2>
                         <p class="text-xs text-gray-400">Daftar site yang melampaui threshold 85% selama 5 minggu terakhir dan memiliki order yang on progress.</p>
                     </div>
-                    <button id="export2" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 w-full sm:w-auto sm:ml-auto sm:justify-end sm:text-right">
+                        <label for="capSearch2" class="text-sm text-gray-400">Cari Site ID</label>
+                        <input
+                            id="capSearch2"
+                            type="text"
+                            placeholder="Cari Site ID"
+                            class="px-3 py-2 rounded-md bg-gray-950 border border-gray-800 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                            autocomplete="off" />
+                        <button id="export2" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto cap-table-wrapper">
                     <table class="min-w-full text-sm cap-table">
@@ -229,13 +246,22 @@
 
             <!-- Tabel 3: Order Selesai -->
             <div class="pt-4 border-t border-gray-800">
-                <div class="flex items-center justify-between mb-2">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-2">
                     <div>
 
                         <h2 class="text-xl font-semibold">Order Selesai</h2>
                         <p class="text-xs text-gray-400">Daftar site yang melampaui threshold 85% selama 5 minggu terakhir dan memiliki order yang sudah on air.</p>
                     </div>
-                    <button id="export3" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 w-full sm:w-auto sm:ml-auto sm:justify-end sm:text-right">
+                        <label for="capSearch3" class="text-sm text-gray-400">Cari Site ID</label>
+                        <input
+                            id="capSearch3"
+                            type="text"
+                            placeholder="Cari Site ID"
+                            class="px-3 py-2 rounded-md bg-gray-950 border border-gray-800 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                            autocomplete="off" />
+                        <button id="export3" type="button" class="btn-ghost" title="Ekspor Excel">Ekspor Excel</button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto cap-table-wrapper">
                     <table class="min-w-full text-sm cap-table">

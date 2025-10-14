@@ -68,8 +68,9 @@ function initCapTable(suffix) {
     const prevEl = document.getElementById(`capPrev${suffix}`);
     const nextEl = document.getElementById(`capNext${suffix}`);
     const infoEl = document.getElementById(`capPageInfo${suffix}`);
+    const searchEl = document.getElementById(`capSearch${suffix}`);
 
-    const state = { all: [], page: 1 };
+    const state = { all: [], filtered: [], page: 1, searchTerm: "" };
 
     rowsEl?.addEventListener("click", (event) => {
         const detailBtn = event.target.closest(".cap-detail-btn");
@@ -142,6 +143,12 @@ function initCapTable(suffix) {
         if (score >= 98) return "pct-critical";
         if (score >= 95) return "pct-warning";
         return "pct-normal";
+    }
+
+    function getColSpan() {
+        const table = rowsEl?.closest("table");
+        const thCount = table?.querySelectorAll("thead th").length;
+        return thCount && thCount > 0 ? thCount : 10;
     }
 
     function formatOnAir(value) {
@@ -244,23 +251,41 @@ function initCapTable(suffix) {
         return `<tr>${cells.join("")}</tr>`;
     }
 
+    function applyFilter() {
+        const term = state.searchTerm.trim().toLowerCase();
+        if (!term) {
+            state.filtered = state.all.slice();
+            return;
+        }
+        state.filtered = state.all.filter((row) => {
+            const site = String(row?.site_id ?? "").toLowerCase();
+            return site.includes(term);
+        });
+    }
+
     function render() {
+        if (!rowsEl || !infoEl) return;
         const per = parseInt(perEl?.value || "50", 10);
-        const total = state.all.length;
-        const pages = Math.max(1, Math.ceil(total / per));
+        const total = state.filtered.length;
+        const pages = Math.max(1, total ? Math.ceil(total / per) : 1);
         if (state.page > pages) state.page = pages;
-        const start = (state.page - 1) * per;
-        const end = Math.min(start + per, total);
-        const view = state.all.slice(start, end);
+        const start = total ? (state.page - 1) * per : 0;
+        const end = total ? Math.min(start + per, total) : 0;
+        const view = state.filtered.slice(start, end);
         const html = view.map((r, i) => buildRowHtml(r, start + i)).join("");
+        const colSpan = getColSpan();
+        let emptyMessage = "Tidak ada data.";
+        if (state.searchTerm.trim()) {
+            emptyMessage = "Tidak ada data untuk Site ID tersebut.";
+        }
         rowsEl.innerHTML =
             html ||
-            '<tr><td colspan="10" class="py-2 text-gray-400">Tidak ada data.</td></tr>';
+            `<tr><td colspan="${colSpan}" class="py-2 text-gray-400">${emptyMessage}</td></tr>`;
         infoEl.textContent = total
             ? `Menampilkan ${start + 1}–${end} dari ${total}`
             : "Menampilkan 0–0 dari 0";
-        prevEl.disabled = state.page <= 1;
-        nextEl.disabled = state.page >= pages;
+        prevEl.disabled = state.page <= 1 || total === 0;
+        nextEl.disabled = state.page >= pages || total === 0;
     }
 
     perEl?.addEventListener("change", () => {
@@ -275,12 +300,21 @@ function initCapTable(suffix) {
     });
     nextEl?.addEventListener("click", () => {
         const per = parseInt(perEl?.value || "50", 10);
-        const pages = Math.max(1, Math.ceil(state.all.length / per));
+        const pages = Math.max(1, Math.ceil(state.filtered.length / per));
         if (state.page < pages) {
             state.page++;
             render();
         }
     });
+
+    searchEl?.addEventListener("input", () => {
+        state.searchTerm = searchEl.value || "";
+        state.page = 1;
+        applyFilter();
+        render();
+    });
+
+    applyFilter();
 
     return {
         setRows(arr) {
@@ -291,12 +325,18 @@ function initCapTable(suffix) {
             safe.sort((a, b) => (b.__score || 0) - (a.__score || 0));
             state.all = safe;
             state.page = 1;
+            applyFilter();
             render();
         },
         loading(msg = "Memuat data…") {
-            rowsEl.innerHTML = `<tr><td colspan=\"10\" class=\"py-2 text-gray-400\">${msg}</td></tr>`;
+            if (!rowsEl) return;
+            const colSpan = getColSpan();
+            rowsEl.innerHTML = `<tr><td colspan=\"${colSpan}\" class=\"py-2 text-gray-400\">${msg}</td></tr>`;
         },
         getRows() {
+            return state.filtered.slice();
+        },
+        getAllRows() {
             return state.all.slice();
         },
     };
