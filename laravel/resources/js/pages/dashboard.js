@@ -252,7 +252,7 @@ function initCapTable(suffix) {
         const start = (state.page - 1) * per;
         const end = Math.min(start + per, total);
         const view = state.all.slice(start, end);
-        const html = view.map((r, i) => buildRowHtml(r, i)).join("");
+        const html = view.map((r, i) => buildRowHtml(r, start + i)).join("");
         rowsEl.innerHTML =
             html ||
             '<tr><td colspan="10" class="py-2 text-gray-400">Tidak ada data.</td></tr>';
