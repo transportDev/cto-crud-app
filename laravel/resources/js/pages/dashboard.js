@@ -70,9 +70,41 @@ function initCapTable(suffix) {
     const infoEl = document.getElementById(`capPageInfo${suffix}`);
     const searchEl = document.getElementById(`capSearch${suffix}`);
 
-    const state = { all: [], filtered: [], page: 1, searchTerm: "" };
+    const state = {
+        all: [],
+        filtered: [],
+        page: 1,
+        searchTerm: "",
+        siteMap: new Map(),
+    };
+    const normalizeSiteId = (value) => String(value ?? "").trim();
 
     rowsEl?.addEventListener("click", (event) => {
+        const commentsBtn = event.target.closest(".cap-comments-btn");
+        if (
+            commentsBtn &&
+            typeof window.openCapacityCommentsModal === "function"
+        ) {
+            const siteId = commentsBtn.dataset.siteId;
+            if (siteId) {
+                const rowData = getRowForSite(siteId);
+                const comments = Array.isArray(rowData?.comments)
+                    ? rowData.comments
+                    : [];
+                const rawCount = Number(rowData?.comments_count);
+                const count =
+                    Number.isFinite(rawCount) && rawCount > 0
+                        ? rawCount
+                        : comments.length;
+                window.openCapacityCommentsModal({
+                    siteId,
+                    comments,
+                    count,
+                });
+            }
+            return;
+        }
+
         const detailBtn = event.target.closest(".cap-detail-btn");
         if (detailBtn && typeof window.openOrderDetailModal === "function") {
             const siteId = detailBtn.dataset.siteId;
@@ -167,6 +199,19 @@ function initCapTable(suffix) {
         return esc(display);
     }
 
+    function getRowForSite(siteId) {
+        const key = normalizeSiteId(siteId);
+        if (!key) return null;
+        if (state.siteMap.has(key)) {
+            return state.siteMap.get(key);
+        }
+        const found = state.all.find(
+            (row) => normalizeSiteId(row?.site_id) === key
+        );
+        if (found) state.siteMap.set(key, found);
+        return found || null;
+    }
+
     function buildRowHtml(r, i) {
         // New format uses s1_util (ratio 0..1) instead of avg_highest_persentase
         const util = getUtil(r);
@@ -177,6 +222,21 @@ function initCapTable(suffix) {
         const badgeClass = getBadgeClass(score);
         const safeSiteId = esc(r.site_id ?? "");
         const hasSiteId = safeSiteId !== "";
+        const rawCommentCount = Number(r.comments_count);
+        const derivedCommentCount = Array.isArray(r.comments)
+            ? r.comments.length
+            : 0;
+        const commentCount =
+            Number.isFinite(rawCommentCount) && rawCommentCount > 0
+                ? rawCommentCount
+                : derivedCommentCount;
+        const hasComments = commentCount > 0;
+        const commentIndicator = hasComments
+            ? '<span class="cap-comment-indicator" title="Site ini memiliki komentar." role="img" aria-label="Site ini memiliki komentar.">&#9733;</span>'
+            : "";
+        const siteCellHtml = hasSiteId
+            ? `<span class="cap-site-cell">${safeSiteId}${commentIndicator}</span>`
+            : '<span class="cap-site-cell">–</span>';
         const orderVal =
             r.no_order && String(r.no_order).trim() !== ""
                 ? esc(r.no_order)
@@ -195,11 +255,6 @@ function initCapTable(suffix) {
         const onAirDisplay = showOnAir ? formatOnAir(r.tgl_on_air) : null;
         const progressHtml = esc((r.progress ?? "–") || "–");
         const actionParts = [];
-        if (hasSiteId && allowDetail) {
-            actionParts.push(
-                `<button class="btn-ghost cap-detail-btn" type="button" title="Detail Order" data-site-id="${safeSiteId}">Detail</button>`
-            );
-        }
         if (hasSiteId && allowCreateUi && canCreateOrderRecord) {
             const linkUtilData = Number.isFinite(util) ? util : "";
             const jarakData =
@@ -210,15 +265,23 @@ function initCapTable(suffix) {
                 `<button class="btn-ghost cap-order-btn" type="button" title="Buat Order" data-site-id="${safeSiteId}" data-link-util="${linkUtilData}" data-jarak-odp="${jarakData}">Order</button>`
             );
         }
+        if (hasSiteId && hasComments) {
+            actionParts.push(
+                `<button class="btn-ghost cap-comments-btn" type="button" title="Lihat Komentar" data-site-id="${safeSiteId}">Lihat Komentar</button>`
+            );
+        }
+        if (hasSiteId && allowDetail) {
+            actionParts.push(
+                `<button class="btn-ghost cap-detail-btn" type="button" title="Detail Order" data-site-id="${safeSiteId}">Detail</button>`
+            );
+        }
         const actionHtml = actionParts.length
             ? `<div class="cap-actions">${actionParts.join("")}</div>`
             : `<span class="text-gray-400">–</span>`;
 
         const cells = [
             `<td class="py-1 pr-4 text-right">${i + 1}</td>`,
-            `<td class="py-1 pr-4 font-medium text-left">${esc(
-                r.site_id
-            )}</td>`,
+            `<td class="py-1 pr-4 font-medium text-left">${siteCellHtml}</td>`,
             `<td class="py-1 pr-4 text-right"><span class="pct-chip ${badgeClass}">${pct.toFixed(
                 1
             )}%</span></td>`,
@@ -319,8 +382,11 @@ function initCapTable(suffix) {
     return {
         setRows(arr) {
             const safe = Array.isArray(arr) ? arr.slice() : [];
+            state.siteMap.clear();
             safe.forEach((row) => {
                 row.__score = calcScore(row);
+                const key = normalizeSiteId(row?.site_id);
+                if (key) state.siteMap.set(key, row);
             });
             safe.sort((a, b) => (b.__score || 0) - (a.__score || 0));
             state.all = safe;
@@ -509,6 +575,8 @@ function boot() {
             capContent?.classList.remove("is-hidden");
         }
     }
+
+    window.loadCapacity = loadCapacity;
 
     // Order summary via API (for pie chart)
     async function loadOrderSummary() {

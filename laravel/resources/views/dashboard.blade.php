@@ -443,6 +443,17 @@
     </div>
 </div>
 
+<!-- Capacity Comments Modal -->
+<div id="capacityCommentsModal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal-shell modal-comments">
+        <button type="button" class="modal-close" onclick="closeCapacityCommentsModal()" aria-label="Tutup">✕</button>
+        <h2>Komentar Site - <span id="capacityCommentsSite">–</span></h2>
+        <p id="capacityCommentsMeta" class="text-sm text-gray-400 mb-3">Tidak ada komentar untuk site ini.</p>
+        <div id="capacityCommentsEmpty" class="detail-empty" style="display:none;">Belum ada komentar.</div>
+        <ul id="capacityCommentsList" class="comment-modal-list" aria-live="polite"></ul>
+    </div>
+</div>
+
 <!-- Full-screen loading overlay -->
 <div id="screenLoading" class="screen-loading" aria-hidden="true">
     <div class="box">
