@@ -1,6 +1,7 @@
 import "./bootstrap";
 import "./orderModal";
 import "./orderDetailModal";
+import "./capacityCommentsModal";
 import "../css/dashboard.css"; // ensure dashboard styles are bundled
 
 // Lazy-load page-specific scripts based on DOM markers to avoid per-page @vite entries

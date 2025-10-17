@@ -136,6 +136,9 @@ body {
 .modal-shell.modal-detail {
     max-width: 720px;
 }
+.modal-shell.modal-comments {
+    max-width: 560px;
+}
 .modal-shell h2 {
     font-size: 20px;
     font-weight: 600;
@@ -195,6 +198,45 @@ body {
 .detail-value {
     font-size: 13px;
     color: var(--text);
+    word-break: break-word;
+}
+.comment-modal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.comment-modal-item {
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: rgba(243, 156, 18, 0.08);
+}
+.comment-modal-item:nth-child(even) {
+    background: rgba(243, 156, 18, 0.05);
+}
+.comment-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.comment-modal-author {
+    font-weight: 600;
+    color: #e0e0e0;
+    font-size: 13px;
+}
+.comment-modal-order {
+    font-size: 11px;
+    color: var(--muted);
+}
+.comment-modal-body {
+    font-size: 13px;
+    color: var(--text);
+    white-space: pre-wrap;
     word-break: break-word;
 }
 
@@ -666,7 +708,24 @@ body {
 .cap-actions {
     display: inline-flex;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
+    width: fit-content;
+}
+.cap-actions .btn-ghost {
+    white-space: nowrap;
+}
+.cap-site-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.cap-comment-indicator {
+    color: #f39c12;
+    font-size: 0.9rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
 }
 
 /* Status and chips */
