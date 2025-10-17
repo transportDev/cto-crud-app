@@ -208,7 +208,17 @@ class DashboardController extends Controller
                         d.progress,
                         d.tgl_on_air,
                         m.`Category Alpro` AS alpro_category,
-                        m.`Type Alpro` AS alpro_type
+                        m.`Type Alpro` AS alpro_type,
+                        GROUP_CONCAT(
+                            DISTINCT CONCAT_WS('|', 
+                                kom.id,
+                                kom.requestor, 
+                                kom.comment,
+                                duo.no
+                            ) 
+                            ORDER BY kom.id DESC 
+                            SEPARATOR ';;'
+                        ) AS comments_data
                     FROM (SELECT ? AS site_id " . str_repeat(" UNION ALL SELECT ?", count($siteIds) - 1) . ") AS s
                     LEFT JOIN (
                         SELECT 
@@ -228,10 +238,34 @@ class DashboardController extends Controller
                         ON d.site_id = s.site_id
                     LEFT JOIN db_cto.masterdata m 
                         ON TRIM(m.`Site ID NE`) = TRIM(s.site_id)
+                    LEFT JOIN db_cto.data_usulan_order duo
+                        ON TRIM(duo.siteid_ne) = TRIM(s.site_id)
+                    LEFT JOIN db_cto.komen_usulan_order kom
+                        ON kom.order_id = duo.no AND TRIM(kom.siteid_ne) = TRIM(s.site_id)
+                    GROUP BY s.site_id, pl.packet_loss, j.jarak, d.no_order, 
+                             d.status_order, d.progress, d.tgl_on_air, 
+                             m.`Category Alpro`, m.`Type Alpro`
                 ", array_merge($siteIds, [$region], $siteIds));
 
                     $map = [];
                     foreach ($combinedRows as $cr) {
+                        // Parse comments data
+                        $comments = [];
+                        if (!empty($cr->comments_data)) {
+                            $commentsRaw = explode(';;', $cr->comments_data);
+                            foreach ($commentsRaw as $commentStr) {
+                                $parts = explode('|', $commentStr);
+                                if (count($parts) === 4) {
+                                    $comments[] = [
+                                        'id' => (int) $parts[0],
+                                        'requestor' => $parts[1],
+                                        'comment' => $parts[2],
+                                        'order_id' => (int) $parts[3],
+                                    ];
+                                }
+                            }
+                        }
+
                         $map[$cr->site_id] = [
                             'packet_loss' => $cr->packet_loss ?? 0,
                             'jarak' => $cr->jarak ?? null,
@@ -241,6 +275,8 @@ class DashboardController extends Controller
                             'progress' => $cr->progress ?? null,
                             'alpro_category' => $cr->alpro_category ?? null,
                             'alpro_type' => $cr->alpro_type ?? null,
+                            'comments' => $comments,
+                            'comments_count' => count($comments),
                         ];
                     }
                     return $map;
