@@ -79,8 +79,8 @@ class CreateUserAccount extends Page implements HasForms
                 : 'Belum ada peran yang tersedia. Tambahkan peran terlebih dahulu melalui halaman manajemen peran.')
             ->placeholder($roleOptions ? 'Pilih peran' : 'Tidak ada peran tersedia')
             ->validationMessages([
-                'required' => 'Silakan pilih peran pengguna.',
-                'in' => 'Peran yang dipilih tidak valid.',
+                'required' => 'Role pengguna wajib dipilih.',
+                'in' => 'Role yang dipilih tidak valid.',
             ]);
 
         if (empty($roleOptions)) {
@@ -124,6 +124,14 @@ class CreateUserAccount extends Page implements HasForms
                                         'min:3',
                                         'max:50',
                                         Rule::unique('users', 'username'),
+                                    ])
+                                    ->validationMessages([
+                                        'required' => 'Username wajib diisi.',
+                                        'string' => 'Username harus berupa teks.',
+                                        'min' => 'Username minimal 3 karakter.',
+                                        'max' => 'Username maksimal 50 karakter.',
+                                        'alpha_dash' => 'Username hanya boleh berisi huruf, angka, tanda hubung, dan garis bawah.',
+                                        'unique' => 'Username sudah digunakan. Silakan pilih username lain.',
                                     ]),
                             ]),
                         Grid::make(2)
@@ -138,14 +146,24 @@ class CreateUserAccount extends Page implements HasForms
                                         'email',
                                         'max:255',
                                         Rule::unique('users', 'email'),
+                                    ])
+                                    ->validationMessages([
+                                        'email' => 'Format email tidak valid.',
+                                        'max' => 'Email maksimal 255 karakter.',
+                                        'unique' => 'Email sudah terdaftar. Silakan gunakan email lain.',
                                     ]),
                                 TextInput::make('password')
                                     ->label('Kata Sandi')
                                     ->placeholder('Minimal 8 karakter')
                                     ->password()
+                                    ->revealable()
                                     ->required()
                                     ->minLength(8)
-                                    ->helperText('Wajib minimal 8 karakter untuk keamanan akun.'),
+                                    ->helperText('Wajib minimal 8 karakter untuk keamanan akun.')
+                                    ->validationMessages([
+                                        'required' => 'Kata sandi wajib diisi.',
+                                        'min' => 'Kata sandi minimal 8 karakter.',
+                                    ]),
                             ]),
                         $roleField,
                     ])
