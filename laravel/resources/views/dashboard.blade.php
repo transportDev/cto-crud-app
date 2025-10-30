@@ -6,7 +6,7 @@
 
 @push('head')
 <script defer src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-{{-- XLSX is now lazy-loaded on demand in resources/js/pages/dashboard.js --}}
+
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/favicon.ico">
 <meta name="theme-color" content="#000000">
@@ -97,7 +97,7 @@
         <div class="kpi-card__meta">Order yang telah selesai</div>
     </div>
 
-    {{-- Pie Chart Card (reusable) --}}
+
     <div class="dashboard-grid__item--donut dashboard-grid__chart">
         <x-chart-card id="orderSummaryChart" title="Ringkasan Order Kapasitas" height="100%" class="chart-card--compact">
             <x-slot name="header">
@@ -106,7 +106,7 @@
         </x-chart-card>
     </div>
 
-    {{-- Traffic Chart Card (reusable) --}}
+
     <div class="dashboard-grid__item--traffic dashboard-grid__chart">
         <x-chart-card id="trafficChart" title="Rata-rata Traffic" height="100%" class="chart-card--compact">
             <x-slot name="header">
@@ -120,7 +120,7 @@
         </x-chart-card>
     </div>
 
-    {{-- Bar Chart Card for Order by NOP --}}
+
     <div class="dashboard-grid__item--bar dashboard-grid__chart">
         <x-chart-card id="orderSummaryNopChart" title="Ringkasan Order per NOP" height="100%" class="chart-card--compact">
             <x-slot name="header">
@@ -141,7 +141,7 @@
         </div>
 
         <div id="capContent" class="space-y-12">
-            <!-- Tabel 1: Belum Ada Order -->
+
             <div class="mt-4">
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end mb-2">
                     <div class="flex flex-col justify-end gap-2 sm:flex-row sm:items-center sm:gap-3 w-full sm:w-auto sm:ml-auto sm:justify-end sm:text-right">
@@ -190,7 +190,7 @@
                 </div>
             </div>
 
-            <!-- Tabel 2: Sudah Ada Order (Status Kosong) -->
+
             <div class="pt-4 border-t border-gray-800">
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-2">
                     <div>
@@ -244,7 +244,7 @@
                 </div>
             </div>
 
-            <!-- Tabel 3: Order Selesai -->
+
             <div class="pt-4 border-t border-gray-800">
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-2">
                     <div>
@@ -299,7 +299,7 @@
                 </div>
             </div>
 
-        </div> <!-- /#capContent -->
+        </div>
 
         <div id="capLoading" class="loading-overlay">
             <div class="spinner" aria-label="Memuat"></div>
@@ -307,7 +307,7 @@
     </div>
 </div>
 
-<!-- Order Modal -->
+
 <div id="orderModal" class="modal-backdrop" aria-hidden="true">
     <div class="modal-shell">
         <button type="button" class="modal-close" onclick="closeOrderModal()" aria-label="Tutup">✕</button>
@@ -412,7 +412,7 @@
                     <div id="orderCommentsList" style="display:none;margin-bottom:10px;padding:10px 12px;border:1px solid var(--panel-border);border-radius:12px;background:#0f0f12;max-height:160px;overflow:auto;">
                         <div id="orderCommentsEmpty" style="color:#9ca3af;font-size:12px;">Belum ada komentar.</div>
                         <ul id="orderCommentsUl" style="list-style:none;margin:0;padding:0;display:none;">
-                            <!-- existing comments go here as li: requestor – comment -->
+
                         </ul>
                     </div>
                     <label style="margin-top:6px;display:block;">Tambah Komentar Baru</label>
@@ -427,7 +427,7 @@
     </div>
 </div>
 
-<!-- Order Detail Modal -->
+
 <div id="orderDetailModal" class="modal-backdrop" aria-hidden="true">
     <div class="modal-shell modal-detail">
         <button type="button" class="modal-close" onclick="closeOrderDetailModal()" aria-label="Tutup">✕</button>
@@ -443,7 +443,7 @@
     </div>
 </div>
 
-<!-- Capacity Comments Modal -->
+
 <div id="capacityCommentsModal" class="modal-backdrop" aria-hidden="true">
     <div class="modal-shell modal-comments">
         <button type="button" class="modal-close" onclick="closeCapacityCommentsModal()" aria-label="Tutup">✕</button>
@@ -454,7 +454,7 @@
     </div>
 </div>
 
-<!-- Full-screen loading overlay -->
+
 <div id="screenLoading" class="screen-loading" aria-hidden="true">
     <div class="box">
         <div class="spinner" aria-label="Memuat"></div>
@@ -462,5 +462,4 @@
     </div>
 </div>
 
-<!-- Order modal logic handled by resources/js/orderModal.js -->
 @endsection

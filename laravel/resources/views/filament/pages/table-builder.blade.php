@@ -1,6 +1,6 @@
 <x-filament::page>
     <div class="space-y-6">
-        {{-- Header --}}
+
         <div class="flex items-center gap-4">
             <div class="bg-red-500/10 p-2 rounded-md">
                 <x-heroicon-o-table-cells class="h-6 w-6 text-red-600" />
@@ -12,12 +12,12 @@
             </div>
         </div>
 
-        {{-- Builder form: This renders the Wizard and the new accordion repeater --}}
+
         <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50">
             {{ $this->form }}
         </div>
 
-        {{-- Sticky action bar --}}
+
         <div class="sticky bottom-4 z-10">
             <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white/75 dark:bg-gray-800/75 backdrop-blur-xl shadow-lg p-2 flex items-center justify-end gap-3">
 
@@ -106,14 +106,14 @@
             </div>
         </x-slot>
     </x-filament::modal>
-    {{-- Enhanced JavaScript with form reset functionality --}}
+
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             let previewTimeout = null;
 
-            // --- Timeout Handlers ---
+
             function handlePreviewCall() {
-                // Set a maximum timeout for preview generation (10 seconds)
+
                 setTimeout(function() {
                     const loadingElements = document.querySelectorAll('[wire\\:loading][wire\\:target="previewTable"]');
                     loadingElements.forEach(function(element) {
@@ -126,7 +126,7 @@
             }
 
             function handleCreateTableCall() {
-                // Handle create table loading timeout (30 seconds for DB operations)
+
                 setTimeout(function() {
                     const loadingElements = document.querySelectorAll('[wire\\:loading][wire\\:target="createTable"]');
                     loadingElements.forEach(function(element) {
@@ -138,7 +138,7 @@
                 }, 30000);
             }
 
-            // Emergency timeout reset - runs every 8 seconds
+
             setInterval(function() {
                 const loadingElements = document.querySelectorAll('[wire\\:loading][wire\\:target="previewTable"]');
                 loadingElements.forEach(function(element) {
@@ -149,7 +149,7 @@
                 });
             }, 8000);
 
-            // --- Wizard Reset Function ---
+
             function goToFirstWizardStep() {
                 const wizard = document.getElementById('table-builder-wizard');
                 if (!wizard) return;
@@ -161,14 +161,14 @@
                 if (firstStepBtn) firstStepBtn.click();
 
                 const url = new URL(window.location.href);
-                url.searchParams.delete('tb_step'); // or 'step' if you didn’t rename it
+                url.searchParams.delete('tb_step');
                 history.replaceState({}, document.title, url);
             }
 
-            // Listen for Livewire events
+
             document.addEventListener('livewire:initialized', function() {
 
-                // Wizard reset event
+
                 Livewire.on('reset-wizard-to-step-one', function() {
                     console.log('Resetting wizard to step one');
                     setTimeout(function() {
@@ -181,7 +181,7 @@
                     }, 500);
                 });
 
-                // Form reset completion
+
                 Livewire.on('form-reset-complete', function() {
                     console.log('Form reset completed');
 
@@ -200,12 +200,11 @@
                     }
                 });
 
-                // Preview completed event
+
                 Livewire.on('preview-completed', function() {
                     console.log('Preview completed');
                 });
 
-                // Step button detection (scoped to wizard)
                 document.addEventListener('click', function(event) {
                     const stepButton = event.target.closest('#table-builder-wizard [role="tablist"] [role="tab"]');
                     if (stepButton) {
@@ -218,14 +217,14 @@
                                 setTimeout(function() {
                                     console.log('Auto-generating preview for step');
                                     handlePreviewCall();
-                                    @this.call('previewTable', true); // silent call
+                                    @this.call('previewTable', true);
                                 }, 500);
                             }
                         }, 100);
                     }
                 });
 
-                // Manual preview button
+
                 document.addEventListener('click', function(event) {
                     if (event.target.matches('[wire\\:click="previewTable"]') ||
                         event.target.closest('[wire\\:click="previewTable"]')) {
@@ -234,7 +233,7 @@
                     }
                 });
 
-                // Create table button
+
                 document.addEventListener('click', function(event) {
                     if (event.target.matches('[wire\\:click="createTable"]') ||
                         event.target.closest('[wire\\:click="createTable"]')) {

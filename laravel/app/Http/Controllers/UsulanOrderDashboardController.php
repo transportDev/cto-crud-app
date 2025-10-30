@@ -1,14 +1,36 @@
 <?php
 
-namespace App\Http\Controllers\Dashboard;
+declare(strict_types=1);
+
+namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
 use App\Models\DataUsulanOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
+/**
+ * Controller Dashboard Usulan Order
+ *
+ * Controller ini mengelola tampilan dan API endpoint untuk dashboard usulan order.
+ * Dashboard ini menampilkan list data usulan order yang diinput oleh user dengan
+ * fitur pagination, pencarian, dan caching.
+ *
+ * @package App\Http\Controllers
+ * @author  CTO CRUD App Team
+ * @version 1.0
+ * @since   1.0.0
+ */
 class UsulanOrderDashboardController extends Controller
 {
+    /**
+     * Menampilkan halaman dashboard usulan order dengan pagination
+     *
+     * GET /dashboard/usulan-order
+     *
+     * @param Request $request Request object dengan query parameters
+     * @return \Illuminate\View\View View dashboard-usulan-order
+     */
     public function index(Request $request)
     {
         $perPage = (int) $request->query('perPage', 25);
@@ -20,7 +42,6 @@ class UsulanOrderDashboardController extends Controller
             }])
             ->orderBy('no', 'asc');
 
-        // Basic search by siteid or requestor
         if ($s = trim((string) $request->query('q', ''))) {
             $query->where(function ($w) use ($s) {
                 $w->where('siteid_ne', 'like', "%$s%")
@@ -41,6 +62,14 @@ class UsulanOrderDashboardController extends Controller
         ]);
     }
 
+    /**
+     * API endpoint untuk mengambil list usulan order dengan caching
+     *
+     * GET /api/dashboard/usulan-order/list
+     *
+     * @param Request $request Request object dengan query parameter 'q' (optional)
+     * @return \Illuminate\Http\JsonResponse JSON response dengan status, count, dan collection usulan orders
+     */
     public function list(Request $request)
     {
         $q = trim((string) $request->query('q', ''));

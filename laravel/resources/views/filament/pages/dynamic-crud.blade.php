@@ -1,6 +1,6 @@
 <x-filament::page>
     <div class="space-y-4">
-        <!-- Sticky header actions and table selector -->
+
         <div class="z-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div class="flex items-center gap-3">
@@ -11,7 +11,7 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2">
-                    <!-- Render the inline selector form -->
+
                     <div class="min-w-[240px]">
                         {{ $this->form }}
                     </div>
@@ -25,11 +25,10 @@
             </div>
         </div>
 
-        <!-- Table region -->
         <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-2">
             {{ $this->table }}
         </div>
 
-        <!-- Helpful empty state is handled by Table definition in the Page class -->
+
     </div>
 </x-filament::page>

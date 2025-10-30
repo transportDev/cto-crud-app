@@ -1,10 +1,10 @@
-/* Constrain Filament Select dropdown height and ensure it appears under the field */
+
 .fi-fo-select .choices__list--dropdown .choices__list {
     max-height: 260px;
     overflow-y: auto;
 }
 
-/* Guard to keep dropdown immediately under the field */
+
 .fi-fo-select .choices__list--dropdown {
     top: calc(100% + 2px) !important;
 }

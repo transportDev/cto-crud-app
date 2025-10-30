@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\DB;
@@ -8,14 +10,51 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
+/**
+ * Controller Dashboard
+ *
+ * Controller ini mengelola endpoint-endpoint untuk dashboard monitoring yang menampilkan:
+ * - Grafik traffic S1 DL (Download) average dalam periode 7 hari
+ * - Daftar site dengan kapasitas S1 tinggi (> threshold)
+ * - Ringkasan status order (belum order, done, on progress)
+ * - Ringkasan order per NOP (Network Operation Partner)
+ *
+ * Semua endpoint menggunakan caching berlapis untuk optimasi performa:
+ * - Cache untuk timestamp terbaru
+ * - Cache untuk data series chart
+ * - Cache untuk daftar site
+ * - Cache untuk enrichment data (packet loss, metadata, comments)
+ *
+ * @package App\Http\Controllers
+ * @author  CTO CRUD App Team
+ * @version 1.0
+ * @since   1.0.0
+ */
 class DashboardController extends Controller
 {
+    /**
+     * Halaman utama dashboard
+     *
+     * Method ini menampilkan halaman dashboard dengan data:
+     * - Grafik S1 DL average dalam periode 7 hari terakhir (hanya untuk JSON request)
+     * - Daftar site tersedia (di-load dari client via /api/traffic)
+     * - Filter berdasarkan site_id (optional)
+     *
+     * Untuk initial page load (SSR), hanya struktur HTML yang di-render tanpa
+     * data berat. Client kemudian fetch data via AJAX untuk performa lebih baik.
+     *
+     * Cache strategy:
+     * - Latest timestamp: 60 detik (configurable via cto.dashboard_latest_cache_ttl)
+     * - Series data: 180 detik (configurable via cto.dashboard_series_cache_ttl)
+     *
+     * @param Request $request Request object dengan query params: json, site_id
+     * @return \Illuminate\Http\Response|\Illuminate\Http\JsonResponse View atau JSON response
+     */
     public function index(Request $request)
     {
         $forJson = $request->wantsJson() || $request->boolean('json');
         $error = null;
         $s1dlLabels = $s1dlValues = [];
-        // Skip computing sites list on initial SSR; client will fetch via /api/traffic
         $sites = [];
         $selectedSiteId = $request->query('site_id');
 
@@ -23,8 +62,6 @@ class DashboardController extends Controller
             $conn = DB::connection('mysql2');
             $table = 'etl_cell_4g_ran_huawei_kpi_hourly_agg';
 
-            // Determine latest timestamp and 7d window
-            // Cache latest timestamp briefly to avoid frequent MAX() scans on a large table
             $latestTtl = (int) config('cto.dashboard_latest_cache_ttl', 60);
             $latestTs = Cache::remember('dash:latestTs', $latestTtl, function () use ($conn, $table) {
                 return $conn->table($table)->max('finish_timestamp');
@@ -33,11 +70,9 @@ class DashboardController extends Controller
                 $latest = Carbon::parse($latestTs);
                 $since = $latest->copy()->subDays(7);
 
-                // Cache keys bound to the last hour window and the selected site
                 $windowKey = 'r7d:' . $latest->copy()->startOfHour()->format('YmdH');
                 $siteKey = $selectedSiteId ? 'site:' . $selectedSiteId : 'all';
 
-                // S1 DL series: only compute for JSON/AJAX requests to speed up initial HTML render
                 if ($forJson) {
                     $seriesTtl = (int) config('cto.dashboard_series_cache_ttl', 180);
                     $rowsDl = Cache::remember("dash:s1dl:$windowKey:$siteKey", $seriesTtl, function () use ($conn, $table, $since, $latest, $selectedSiteId) {
@@ -55,7 +90,6 @@ class DashboardController extends Controller
                     $s1dlLabels = $rowsDl->pluck('ts')->all();
                     $s1dlValues = $rowsDl->pluck('avg_mbps')->map(fn($v) => round((float)$v, 2))->all();
                 }
-                // Sites list intentionally skipped on SSR (client will populate from /api/traffic)
             } else {
                 $error = 'No data found in db2 table.';
             }
@@ -73,7 +107,6 @@ class DashboardController extends Controller
             'earliestTs' => isset($since) ? $since->copy()->startOfHour()->format('Y-m-d H:00') : null,
         ];
 
-        // Support fetching data as JSON for AJAX updates
         if ($forJson) {
             return response()->json($payload);
         }
@@ -81,7 +114,24 @@ class DashboardController extends Controller
         return view('dashboard', $payload);
     }
 
-    // Lightweight JSON endpoint for S1 DL average series (client-side chart fetch)
+    /**
+     * Endpoint JSON untuk data traffic chart
+     *
+     * Endpoint ringan yang di-load dari client-side untuk mengisi chart traffic.
+     * Method ini mengembalikan:
+     * - Series data S1 DL average (labels & values) untuk 7 hari terakhir
+     * - Daftar site yang tersedia (max 500 sites, distinct dari data 7 hari)
+     * - Timestamp range (latest & earliest)
+     *
+     * Cache strategy berlapis:
+     * - Latest timestamp: 60 detik
+     * - Series data: 180 detik
+     * - Sites list: 6 jam (21600 detik)
+     * - Payload komposit: 120 detik
+     *
+     * @param Request $request Request object dengan query param: site_id (optional)
+     * @return \Illuminate\Http\JsonResponse JSON response dengan ok status dan data
+     */
     public function traffic(Request $request)
     {
         $selectedSiteId = $request->query('site_id');
@@ -89,7 +139,6 @@ class DashboardController extends Controller
         $conn = DB::connection('mysql2');
 
         try {
-            // Cache latest timestamp briefly to avoid frequent MAX() scans
             $latestTtl = (int) config('cto.dashboard_latest_cache_ttl', 60);
             $latestTs = Cache::remember('dash:latestTs', $latestTtl, function () use ($conn, $table) {
                 return $conn->table($table)->max('finish_timestamp');
@@ -104,10 +153,8 @@ class DashboardController extends Controller
             $windowKey = 'r7d:' . $latest->copy()->startOfHour()->format('YmdH');
             $siteKey = $selectedSiteId ? 'site:' . $selectedSiteId : 'all';
 
-            // Top-level payload cache (composed from existing sub-caches)
             $payloadTtl = (int) config('cto.dashboard_traffic_cache_ttl', 120);
             $payload = Cache::remember("dash:traffic:v1:$windowKey:$siteKey", $payloadTtl, function () use ($conn, $table, $since, $latest, $selectedSiteId, $windowKey) {
-                // Series cache (already efficient)
                 $seriesTtl = (int) config('cto.dashboard_series_cache_ttl', 180);
                 $rowsDl = Cache::remember("dash:s1dl:$windowKey:" . ($selectedSiteId ? 'site:' . $selectedSiteId : 'all'), $seriesTtl, function () use ($conn, $table, $since, $latest, $selectedSiteId) {
                     return $conn->table($table)
@@ -121,7 +168,6 @@ class DashboardController extends Controller
                         ->get();
                 });
 
-                // Sites list cache: extend default TTL to 6 hours (21600s)
                 $sitesTtl = (int) config('cto.dashboard_sites_cache_ttl', 21600);
                 $sites = Cache::remember("dash:sites:$windowKey", $sitesTtl, function () use ($conn, $table, $since, $latest) {
                     return $conn->table($table)
@@ -152,20 +198,42 @@ class DashboardController extends Controller
         }
     }
 
+    /**
+     * Endpoint JSON untuk data capacity sites
+     *
+     * Method ini mengembalikan daftar site yang memiliki utilisasi S1 >= threshold
+     * beserta enrichment data tambahan:
+     * - Latest S1 utilization per site dari data_s1_util (mysql3)
+     * - Packet loss average dari official_mhi_weekly_summary
+     * - Jarak site dari jarak_site_radio
+     * - Order info dari data_site_order
+     * - Metadata Alpro dari masterdata
+     * - Comments dari komen_usulan_order
+     *
+     * Process flow:
+     * 1. Query latest S1 util per site yang >= threshold
+     * 2. Enrich dengan packet loss, jarak, order, metadata, comments
+     * 3. Merge main rows dengan enrichment data
+     * 4. Return JSON dengan ok status
+     *
+     * Cache strategy:
+     * - Main capacity data: 30 menit (configurable via cto.capacity_cache_ttl)
+     * - Enrichment data: 30 menit per set of site IDs
+     *
+     * @param Request $request Request object dengan params: threshold (default 0.85), limit (optional)
+     * @return \Illuminate\Http\JsonResponse JSON response dengan daftar site capacity tinggi
+     */
     public function capacity(Request $request)
     {
         $threshold = (float) $request->input('threshold', 0.85);
-        $limit = (int) $request->input('limit', 0); // optional, can be used later
-        $cacheTtl = (int) config('cto.capacity_cache_ttl', 1800); // 30 minutes
+        $limit = (int) $request->input('limit', 0);
+        $cacheTtl = (int) config('cto.capacity_cache_ttl', 1800);
 
         $cacheKey = "capacity_latest_{$threshold}";
 
         try {
             $rows = Cache::remember($cacheKey, $cacheTtl, function () use ($threshold) {
 
-                // -------------------------------
-                // 1. Get latest S1 utilization per site (mysql3)
-                // -------------------------------
                 $sqlLatest = "
                 SELECT t1.site_id, t1.s1_util, t1.timestamp
                 FROM data_s1_util t1
@@ -190,9 +258,6 @@ class DashboardController extends Controller
                 $placeholders = implode(',', array_fill(0, count($siteIds), '?'));
                 $region = config('cto.packet_loss_region', 'BALI NUSRA');
 
-                // -------------------------------
-                // 2. Enrich with packet loss & metadata (mysql3)
-                // -------------------------------
                 $siteSetHash = md5(implode(',', $siteIds));
                 $enrichTtl = (int) config('cto.dashboard_capacity_enrich_cache_ttl', 1800);
 
@@ -249,7 +314,6 @@ class DashboardController extends Controller
 
                     $map = [];
                     foreach ($combinedRows as $cr) {
-                        // Parse comments data
                         $comments = [];
                         if (!empty($cr->comments_data)) {
                             $commentsRaw = explode(';;', $cr->comments_data);
@@ -282,9 +346,6 @@ class DashboardController extends Controller
                     return $map;
                 });
 
-                // -------------------------------
-                // 3. Merge main rows with enrichment
-                // -------------------------------
                 foreach ($mainRows as &$row) {
                     $siteId = $row['site_id'];
                     $row = array_merge($row, $combinedMap[$siteId] ?? []);
@@ -294,9 +355,6 @@ class DashboardController extends Controller
                 return $mainRows;
             });
 
-            // -------------------------------
-            // 4. Return JSON
-            // -------------------------------
             return response()->json([
                 'ok' => true,
                 'threshold' => $threshold,
@@ -312,10 +370,27 @@ class DashboardController extends Controller
         }
     }
 
-
-
-
-    // Order summary counts for pie chart
+    /**
+     * Endpoint JSON untuk ringkasan status order (pie chart)
+     *
+     * Method ini mengembalikan summary data order untuk pie chart dengan breakdown:
+     * - Belum ada order: site yang belum memiliki order sama sekali
+     * - Order Done: site dengan order yang sudah Close (progress = '5.Close')
+     * - Order On Progress: site dengan order tapi belum Close
+     *
+     * Data dikembalikan untuk 2 snapshot date:
+     * - Latest date (hari ini/terbaru)
+     * - Previous date (kemarin/sebelumnya)
+     *
+     * Juga menghitung delta (perubahan) antara kedua tanggal tersebut.
+     *
+     * Cache strategy:
+     * - Summary data: 1 jam (configurable via cto.dashboard_order_summary_cache_ttl)
+     * - Cache key terikat pada latest_date dan prev_date
+     *
+     * @param Request $request Request object
+     * @return \Illuminate\Http\JsonResponse JSON response dengan summary order
+     */
     public function orderSummary(Request $request)
     {
         try {
@@ -447,6 +522,24 @@ SQL;
         }
     }
 
+    /**
+     * Endpoint JSON untuk ringkasan order per NOP
+     *
+     * Method ini mengembalikan breakdown order berdasarkan NOP dengan 3 kategori:
+     * - Belum ada Order: usulan yang belum memiliki order
+     * - Order Done: order yang sudah selesai (progress = '5.Close')
+     * - Order On Progress: order yang masih berjalan (belum Close)
+     *
+     * Data dikelompokkan per NOP dan diurutkan berdasarkan nama NOP.
+     * NOP yang tidak diketahui akan ditampilkan sebagai 'Tidak diketahui'.
+     *
+     * Cache strategy:
+     * - Summary per NOP: 1 jam (configurable via cto.dashboard_order_summary_cache_ttl)
+     * - Cache key terikat pada max_date dari data_site_order
+     *
+     * @param Request $request Request object
+     * @return \Illuminate\Http\JsonResponse JSON response dengan rows per NOP
+     */
     public function orderSummaryByNop(Request $request)
     {
         try {

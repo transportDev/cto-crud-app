@@ -1,7 +1,7 @@
-/* Dashboard shared styles: tokens, layout, sidebar, tables, scrollbars, cards */
+
 :root {
-    --bg: #0f0f11; /* page background */
-    --panel: #17181c; /* card background */
+    --bg: #0f0f11; 
+    --panel: #17181c; 
     --panel-border: #25262b;
     --text: #e5e7eb;
     --muted: #9ca3af;
@@ -10,7 +10,7 @@
     --grid: #2a2f36;
     --row-alt: rgba(255, 255, 255, 0.025);
     --row-hover: rgba(255, 255, 255, 0.06);
-    /* extra tokens used in main dashboard */
+    
     --warn: #f59e0b;
     --warn-bg: rgba(245, 158, 11, 0.15);
     --crit: #ef4444;
@@ -23,23 +23,9 @@ html,
 body {
     height: 100%;
 }
-/* @media (prefers-color-scheme: light) {
-    :root {
-        --bg: #f7f7f8;
-        --panel: #ffffff;
-        --panel-border: #e5e7eb;
-        --text: #0f172a;
-        --muted: #475569;
-        --grid: #e5e7eb;
-        --row-alt: rgba(0, 0, 0, 0.035);
-        --row-hover: rgba(0, 0, 0, 0.08);
-        --warn-bg: rgba(245, 158, 11, 0.18);
-        --crit-bg: rgba(239, 68, 68, 0.2);
-        --ok-bg: rgba(16, 185, 129, 0.2);
-    }
-} */
 
-/* Base page styling for dashboard pages */
+
+
 body {
     background: var(--bg);
     color: var(--text);
@@ -48,12 +34,12 @@ body {
     overflow-x: hidden;
 }
 
-/* Tooltip font consistency for charts */
+
 .echarts-tooltip {
     font-family: Poppins, ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Loading overlays */
+
 .loading-overlay {
     position: absolute;
     inset: 0;
@@ -106,7 +92,7 @@ body {
     }
 }
 
-/* Modal */
+
 .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -240,7 +226,7 @@ body {
     word-break: break-word;
 }
 
-/* Form layout */
+
 .field-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -326,7 +312,7 @@ body {
     animation: spin 0.75s linear infinite;
 }
 
-/* Cards */
+
 .dash-card {
     background: var(--panel);
     border: 1px solid var(--panel-border);
@@ -352,7 +338,7 @@ body {
     margin-top: 2px;
 }
 
-/* Tables */
+
 .dash-table-wrapper {
     max-height: 70vh;
     overflow: auto;
@@ -401,7 +387,7 @@ body {
     white-space: nowrap;
 }
 
-/* Pagination summary row */
+
 .dash-pagination {
     display: flex;
     align-items: center;
@@ -411,7 +397,7 @@ body {
     color: var(--muted);
 }
 
-/* Scrollbars */
+
 .dash-scroll {
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
@@ -434,7 +420,7 @@ body {
     background: rgba(255, 255, 255, 0.35);
 }
 
-/* Sidebar */
+
 .dash-sidebar {
     width: 240px;
     flex: 0 0 240px;
@@ -511,7 +497,7 @@ body {
     }
 }
 
-/* User menu in sidebar */
+
 .user-btn {
     display: inline-flex;
     align-items: center;
@@ -604,7 +590,7 @@ body {
     }
 }
 
-/* Utilities */
+
 .truncate {
     max-width: 220px;
     overflow: hidden;
@@ -628,7 +614,7 @@ body {
     color: #cbd5e1;
 }
 
-/* Legacy helpers for main dashboard */
+
 .card {
     width: 100%;
     max-width: 100%;
@@ -687,7 +673,7 @@ body {
     transform: translateY(-1px);
 }
 
-/* Capacity table */
+
 .cap-table-wrapper {
     max-height: 640px;
     overflow: auto;
@@ -728,7 +714,7 @@ body {
     align-items: center;
 }
 
-/* Status and chips */
+
 .status-badge {
     display: inline-flex;
     align-items: center;
@@ -775,7 +761,7 @@ body {
     color: var(--text);
 }
 
-/* Order badges */
+
 .order-badge {
     font-size: 11px;
     font-weight: 500;
@@ -794,7 +780,7 @@ body {
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
 }
 
-/* Chart card canvas height helper */
+
 .chart-card__canvas {
     height: var(--chart-height, 420px);
     width: 100%;
@@ -816,7 +802,7 @@ body {
     flex: 1 1 auto;
 }
 
-/* Dashboard compact grid layout */
+
 .dashboard-grid {
     display: grid;
     gap: 18px;

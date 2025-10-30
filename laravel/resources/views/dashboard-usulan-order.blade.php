@@ -127,7 +127,7 @@
             sel.addEventListener('change', function() {
                 const url = new URL(window.location.href);
                 url.searchParams.set('perPage', this.value);
-                url.searchParams.delete('page'); // reset to first page
+                url.searchParams.delete('page');
                 window.location.href = url.toString();
             });
         })();

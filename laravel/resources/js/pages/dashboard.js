@@ -1,4 +1,3 @@
-// Dashboard page script: charts enabled
 import { LineChart } from "../components/LineChart.js";
 import { PieChart } from "../components/PieChart.js";
 import { BarChart } from "../components/BarChart.js";
@@ -13,8 +12,6 @@ function parseDashData() {
         return {};
     }
 }
-
-// Date helpers
 const monthsID = [
     "Jan",
     "Feb",
@@ -53,15 +50,11 @@ function fmtDayLabel(ms) {
     const mm = monthsID[d.getUTCMonth()];
     return `${dd} ${mm}`;
 }
-
-// Simple screen loading overlay controls
 function screenLoading(flag) {
     document
         .getElementById("screenLoading")
         ?.classList.toggle("active", !!flag);
 }
-
-// Capacity tables small module
 function initCapTable(suffix) {
     const rowsEl = document.getElementById(`capRows${suffix}`);
     const perEl = document.getElementById(`capPerPage${suffix}`);
@@ -213,7 +206,6 @@ function initCapTable(suffix) {
     }
 
     function buildRowHtml(r, i) {
-        // New format uses s1_util (ratio 0..1) instead of avg_highest_persentase
         const util = getUtil(r);
         const pct = util * 100;
         const packetLoss = r.packet_loss;
@@ -407,8 +399,6 @@ function initCapTable(suffix) {
         },
     };
 }
-
-// Main bootstrap
 function boot() {
     const state = parseDashData();
     const numberFormatter = new Intl.NumberFormat("id-ID");
@@ -420,8 +410,6 @@ function boot() {
         progressDelta: document.getElementById("kpiProgressDelta"),
         doneDelta: document.getElementById("kpiDoneDelta"),
     };
-
-    // Populate Site select from embedded state (may be empty on SSR; we'll repopulate from /api/traffic)
     const siteSelect = document.getElementById("siteSelect");
     if (siteSelect) {
         const urlSel = new URL(window.location.href);
@@ -441,8 +429,6 @@ function boot() {
                 )
                 .join("");
     }
-
-    // Charts
     let trafficChart = new LineChart("trafficChart", {
         series: [{ name: "S1 DL rata-rata (Mbps)" }],
     });
@@ -458,13 +444,9 @@ function boot() {
             itemHeight: 12,
         },
     });
-
-    // Capacity tables init BEFORE loadCapacity()
     const capTable1 = initCapTable("1");
     const capTable2 = initCapTable("2");
     const capTable3 = initCapTable("3");
-
-    // Seed traffic chart if server embedded data exists
     if (
         trafficChart &&
         Array.isArray(state.s1dlLabels) &&
@@ -478,8 +460,6 @@ function boot() {
         ]);
         trafficChart.updateData(seededPoints);
     }
-
-    // API helpers
     async function refreshTraffic(siteId) {
         const url = new URL("/api/traffic", window.location.origin);
         if (siteId) url.searchParams.set("site_id", siteId);
@@ -489,7 +469,6 @@ function boot() {
                 headers: { Accept: "application/json" },
             });
             const data = await res.json();
-            // If SSR skipped sites, populate dropdown now
             if (
                 siteSelect &&
                 (!Array.isArray(state.sites) || state.sites.length === 0)
@@ -514,7 +493,6 @@ function boot() {
                         )
                         .join("");
             }
-            // Update traffic chart
             if (
                 trafficChart &&
                 Array.isArray(data.s1dlLabels) &&
@@ -530,8 +508,6 @@ function boot() {
             trafficChart?.setLoading(false);
         }
     }
-
-    // Capacity trend removed
 
     async function loadCapacity() {
         const capLoading = document.getElementById("capLoading");
@@ -577,8 +553,6 @@ function boot() {
     }
 
     window.loadCapacity = loadCapacity;
-
-    // Order summary via API (for pie chart)
     async function loadOrderSummary() {
         try {
             orderSummaryChart?.setLoading(true);
@@ -728,8 +702,6 @@ function boot() {
 
         const prevLabel = dates?.previous ?? "Kemarin";
         const latestLabel = dates?.latest ?? "Hari Ini";
-
-        // Update the contextual label - more formal and subtle
         if (labelEl) {
             labelEl.textContent = `dari ${prevLabel.toLowerCase()}`;
         }
@@ -740,8 +712,6 @@ function boot() {
             diff > 0
                 ? `+${numberFormatter.format(diff)}`
                 : numberFormatter.format(diff);
-
-        // Create contextual label based on trend
         let contextLabel = "";
         if (diff > 0) {
             contextLabel = `Naik ${numberFormatter.format(
@@ -760,7 +730,6 @@ function boot() {
         );
 
         el.classList.remove("is-animating");
-        // Force reflow to restart the glow animation on updates
         void el.offsetWidth;
         el.classList.add("is-animating");
     }
@@ -826,8 +795,6 @@ function boot() {
             orderSummaryNopChart?.setLoading(false);
         }
     }
-
-    // Export helpers
     function rowsToAoa(rows) {
         const header = [
             "#",
@@ -867,8 +834,6 @@ function boot() {
         const aoa = rowsToAoa(rows);
         await exportAoa(fileBaseName, aoa);
     }
-
-    // Wire events
     document.getElementById("refreshPie")?.addEventListener("click", () => {
         loadCapacity();
         loadOrderSummary();
@@ -876,8 +841,6 @@ function boot() {
     document
         .getElementById("refreshNop")
         ?.addEventListener("click", () => loadOrderSummaryByNop());
-
-    // Export buttons
     document
         .getElementById("export1")
         ?.addEventListener("click", () =>
@@ -901,8 +864,6 @@ function boot() {
                 window.openOrderModal();
             }
         });
-
-    // Site select
     let debounceTimer;
     siteSelect?.addEventListener("change", (e) => {
         clearTimeout(debounceTimer);
@@ -915,8 +876,6 @@ function boot() {
             refreshTraffic(val);
         }, 200);
     });
-
-    // Simulate KPI data changes for testing
     function simulateKpiChanges() {
         let simulationInterval;
         let simulationCount = 0;
@@ -972,19 +931,13 @@ function boot() {
             updateKpiCards(mockData);
             simulationCount++;
         }
-
-        // Start simulation
         console.log(
             "Starting KPI simulation (10 iterations, 3 seconds each)..."
         );
         simulationInterval = setInterval(runSimulation, 3000);
-        runSimulation(); // Run immediately first time
+        runSimulation();
     }
-
-    // Expose simulation function to window for testing
     window.simulateKpiChanges = simulateKpiChanges;
-
-    // Add keyboard shortcut: Ctrl+Shift+K to trigger simulation
     document.addEventListener("keydown", (e) => {
         if (e.ctrlKey && e.shiftKey && e.key === "K") {
             e.preventDefault();
@@ -994,8 +947,6 @@ function boot() {
             simulateKpiChanges();
         }
     });
-
-    // Initial load
     (async () => {
         screenLoading(true);
         try {

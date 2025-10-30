@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Pages;
 
 use App\Models\User;
@@ -13,6 +15,20 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema as DBSchema;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Halaman Schema Wizard
+ *
+ * Halaman ini memungkinkan administrator untuk memodifikasi skema tabel yang sudah ada
+ * dengan wizard step-by-step. Fitur yang tersedia:
+ * - Pilih tabel yang akan dimodifikasi
+ * - Tambah field baru atau relasi foreign key
+ * - Preview perubahan skema
+ * - Terapkan perubahan langsung ke database
+ *
+ * @package App\Filament\Pages
+ * @author CTO Panel
+ * @since 1.0.0
+ */
 class SchemaWizard extends Page
 {
     protected static ?string $navigationIcon = 'heroicon-o-wrench-screwdriver';
@@ -21,20 +37,44 @@ class SchemaWizard extends Page
     protected static ?int $navigationSort = 3;
     protected static string $view = 'filament.pages.schema-wizard';
 
+
     public ?array $data = [];
+
+
     public ?array $analysis = null;
 
+    /**
+     * Memeriksa apakah pengguna dapat mengakses halaman ini
+     *
+     * @return bool True jika pengguna memiliki role admin
+     */
     public static function canAccess(): bool
     {
         $u = Auth::user();
         return $u instanceof User && $u->hasRole('admin');
     }
 
+    /**
+     * Menentukan apakah halaman ini harus ditampilkan di navigasi
+     *
+     * @return bool True jika pengguna dapat mengakses
+     */
     public static function shouldRegisterNavigation(): bool
     {
         return static::canAccess();
     }
 
+    /**
+     * Mendefinisikan skema form wizard untuk modifikasi skema tabel
+     *
+     * Form wizard terdiri dari 3 step:
+     * 1. Pilih Tabel: Memilih tabel yang akan dimodifikasi
+     * 2. Tambah Field/Relasi: Definisi field baru atau relasi foreign key
+     * 3. Tinjau & Konfirmasi: Review dan terapkan perubahan
+     *
+     * @param Form $form Instance form Filament
+     * @return Form Form yang sudah dikonfigurasi
+     */
     public function form(Form $form): Form
     {
         $integerTypes = ['integer', 'bigInteger'];
@@ -111,7 +151,6 @@ class SchemaWizard extends Page
                                                 ->searchable()
                                                 ->live()
                                                 ->afterStateUpdated(function ($state, callable $set) {
-                                                    // Reset dependent fields when reference table changes
                                                     $set('label_columns', []);
                                                     $set('search_column', null);
                                                 })
@@ -218,7 +257,7 @@ class SchemaWizard extends Page
             ])
                 ->live()
                 ->afterStateUpdated(function ($livewire, $state) {
-                    if ($state == 2) { // Step index is 0-based, '2' is the third step
+                    if ($state == 2) {
                         $livewire->refreshAnalysis();
                     }
                 })
@@ -226,6 +265,14 @@ class SchemaWizard extends Page
         ])->statePath('data');
     }
 
+    /**
+     * Refresh analisis perubahan skema
+     *
+     * Method ini menganalisis perubahan yang akan diterapkan dan
+     * menghasilkan preview SQL yang akan dieksekusi
+     *
+     * @return void
+     */
     public function refreshAnalysis(): void
     {
         $state = $this->form->getState();
@@ -237,11 +284,28 @@ class SchemaWizard extends Page
         $this->analysis = $svc->analyze($state['table'], $state['items']);
     }
 
+    /**
+     * Inisialisasi halaman dan setup form
+     *
+     * @return void
+     */
     public function mount(): void
     {
         $this->form->fill($this->data);
     }
 
+    /**
+     * Menerapkan perubahan skema langsung ke database
+     *
+     * Method ini akan:
+     * 1. Validasi data form
+     * 2. Eksekusi perubahan skema via service
+     * 3. Menampilkan notifikasi sukses/gagal
+     * 4. Reset form setelah sukses
+     *
+     * @param SchemaWizardService $svc Service untuk modifikasi skema
+     * @return void
+     */
     public function applyChanges(SchemaWizardService $svc): void
     {
         $state = $this->form->getState();
@@ -259,7 +323,6 @@ class SchemaWizard extends Page
                 ->success()
                 ->send();
 
-            // Clear the form after successful application
             $this->form->fill(['table' => $state['table'], 'items' => []]);
             $this->analysis = null;
         } else {
@@ -271,7 +334,11 @@ class SchemaWizard extends Page
         }
     }
 
-    // Auto-refresh preview when items change
+    /**
+     * Auto-refresh analisis ketika items berubah
+     *
+     * @return void
+     */
     public function updatedDataItems(): void
     {
         $this->refreshAnalysis();

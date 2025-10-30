@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Pages;
 
 use App\Models\User;
@@ -18,6 +20,16 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Halaman Reset Password Pengguna
+ *
+ * Halaman ini memungkinkan administrator untuk mereset password pengguna lain
+ * dalam sistem. Hanya pengguna dengan role 'admin' yang dapat mengakses halaman ini.
+ *
+ * @package App\Filament\Pages
+ * @author CTO Panel
+ * @since 1.0.0
+ */
 class ResetUserPassword extends Page implements HasForms
 {
     use InteractsWithForms;
@@ -26,13 +38,23 @@ class ResetUserPassword extends Page implements HasForms
     protected static ?string $navigationIcon = 'heroicon-o-lock-closed';
     protected static ?string $navigationGroup = 'Management';
     protected static ?string $navigationLabel = 'Reset Password Pengguna';
-    protected static ?string $title = 'Reset Password Pengguna';
+    protected static ?string $title = '';
     protected static ?string $slug = 'reset-password-pengguna';
     protected static ?int $navigationSort = 5;
     protected static string $view = 'filament.pages.reset-user-password';
 
+    /**
+     * Data form untuk reset password
+     *
+     * @var array<string, mixed>|null
+     */
     public ?array $data = [];
 
+    /**
+     * Memeriksa apakah pengguna saat ini dapat mengakses halaman ini
+     *
+     * @return bool True jika pengguna memiliki role admin
+     */
     public static function canAccess(): bool
     {
         $user = Auth::user();
@@ -40,11 +62,21 @@ class ResetUserPassword extends Page implements HasForms
         return $user instanceof User && $user->hasRole('admin');
     }
 
+    /**
+     * Menentukan apakah halaman ini harus ditampilkan di navigasi
+     *
+     * @return bool True jika pengguna dapat mengakses halaman
+     */
     public static function shouldRegisterNavigation(): bool
     {
         return static::canAccess();
     }
 
+    /**
+     * Inisialisasi halaman dan reset form ke nilai default
+     *
+     * @return void
+     */
     public function mount(): void
     {
         abort_unless(static::canAccess(), 403);
@@ -56,6 +88,16 @@ class ResetUserPassword extends Page implements HasForms
         ]);
     }
 
+    /**
+     * Mendefinisikan skema form untuk reset password
+     *
+     * Form ini terdiri dari dua section:
+     * 1. Informasi Pengguna: Dropdown untuk memilih pengguna
+     * 2. Password Baru: Input password dan konfirmasi password
+     *
+     * @param Form $form Instance form Filament
+     * @return Form Form yang sudah dikonfigurasi
+     */
     public function form(Form $form): Form
     {
         return $form
@@ -136,6 +178,13 @@ class ResetUserPassword extends Page implements HasForms
             ->statePath('data');
     }
 
+    /**
+     * Mereset form ke nilai default
+     *
+     * Method ini membersihkan semua input form dan error validation
+     *
+     * @return void
+     */
     public function resetForm(): void
     {
         $this->form->fill([
@@ -147,11 +196,29 @@ class ResetUserPassword extends Page implements HasForms
         $this->resetErrorBag();
     }
 
+    /**
+     * Menampilkan modal konfirmasi reset password
+     *
+     * @return void
+     */
     public function confirmPasswordReset(): void
     {
         $this->dispatch('open-modal', id: 'confirm-password-reset');
     }
 
+    /**
+     * Mereset password pengguna yang dipilih
+     *
+     * Method ini akan:
+     * 1. Validasi data form
+     * 2. Update password pengguna
+     * 3. Mengirim notifikasi sukses/gagal
+     * 4. Mencatat aktivitas ke log
+     * 5. Menutup modal dan mereset form
+     *
+     * @return void
+     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     */
     public function resetPassword(): void
     {
         $data = $this->form->getState();
@@ -159,11 +226,9 @@ class ResetUserPassword extends Page implements HasForms
         try {
             $user = User::findOrFail($data['user_id']);
 
-            // Update password
             $user->password = Hash::make($data['new_password']);
             $user->save();
 
-            // Send success notification
             Notification::make()
                 ->title('Password Berhasil Direset')
                 ->body("Password untuk pengguna \"{$user->name}\" telah berhasil direset.")
@@ -171,7 +236,6 @@ class ResetUserPassword extends Page implements HasForms
                 ->duration(5000)
                 ->send();
 
-            // Log the action
             Log::info('Password reset by admin', [
                 'user_id' => $user->id,
                 'user_name' => $user->name,
@@ -179,7 +243,6 @@ class ResetUserPassword extends Page implements HasForms
                 'reset_by_id' => Auth::id(),
             ]);
 
-            // Close modal and reset form after successful password reset
             $this->dispatch('close-modal', id: 'confirm-password-reset');
             $this->resetForm();
         } catch (\Exception $e) {

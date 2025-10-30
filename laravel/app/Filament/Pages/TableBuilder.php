@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Pages;
 
 use App\Services\TableBuilderService;
@@ -15,6 +17,20 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Halaman Table Builder
+ *
+ * Halaman ini memungkinkan administrator untuk membuat tabel database secara visual
+ * dengan wizard step-by-step. Fitur yang tersedia:
+ * - Definisi tabel dengan nama dan opsi (timestamps, soft deletes)
+ * - Definisi kolom dengan berbagai tipe data
+ * - Preview struktur tabel
+ * - Generate dan eksekusi migration
+ *
+ * @package App\Filament\Pages
+ * @author CTO Panel
+ * @since 1.0.0
+ */
 class TableBuilder extends Page
 {
     protected static ?string $navigationIcon = 'heroicon-o-table-cells';
@@ -24,12 +40,22 @@ class TableBuilder extends Page
     protected static ?int $navigationSort = 1;
     protected static ?string $title = null;
 
+
     public ?array $data = [];
+
+
     public ?string $preview = null;
+
+
     public ?array $tablePreview = null;
+
+
     public bool $previewLoading = false;
+
+
     public bool $autoRefresh = true;
-    public int $currentStep = 0; // Track current wizard step
+
+    public int $currentStep = 0;
 
     protected $listeners = [
         'previewTable' => 'previewTable',
@@ -37,35 +63,53 @@ class TableBuilder extends Page
         'wizardStepChanged' => 'handleWizardStepChanged'
     ];
 
+    /**
+     * Mendapatkan label navigasi dari file translasi
+     *
+     * @return string Label navigasi
+     */
     public static function getNavigationLabel(): string
     {
         return __('table-builder.navigation_label');
     }
 
+    /**
+     * Mendapatkan judul halaman dari file translasi
+     *
+     * @return string Judul halaman
+     */
     public function getTitle(): string
     {
         return __('table-builder.title');
     }
 
+    /**
+     * Inisialisasi halaman dan setup form awal
+     *
+     * @return void
+     */
     public function mount(): void
     {
         if (!self::canAccess()) {
             abort(403);
         }
 
-        // Set locale to Indonesian for this page
         app()->setLocale('id');
 
         $this->form->fill([
             'timestamps' => true,
             'soft_deletes' => false,
-            // Add an initial empty column to guide the user
             'columns' => [
                 ['name' => 'id', 'type' => 'bigInteger', 'auto_increment' => true, 'primary' => true, 'unsigned' => true],
             ],
         ]);
     }
 
+    /**
+     * Memeriksa apakah pengguna dapat mengakses halaman ini
+     *
+     * @return bool True jika pengguna memiliki role admin
+     */
     public static function canAccess(): bool
     {
         if (!Auth::check()) {
@@ -75,11 +119,27 @@ class TableBuilder extends Page
         return $u instanceof \App\Models\User && method_exists($u, 'hasRole') && $u->hasRole('admin');
     }
 
+    /**
+     * Menentukan apakah halaman ini harus ditampilkan di navigasi
+     *
+     * @return bool True jika pengguna dapat mengakses
+     */
     public static function shouldRegisterNavigation(): bool
     {
         return self::canAccess();
     }
 
+    /**
+     * Mendefinisikan skema form wizard untuk membuat tabel
+     *
+     * Form wizard terdiri dari 3 step:
+     * 1. Informasi Tabel: Nama tabel dan opsi dasar
+     * 2. Definisi Kolom: Detil setiap kolom dengan tipe dan atribut
+     * 3. Preview & Konfirmasi: Tampilan preview sebelum eksekusi
+     *
+     * @param Form $form Instance form Filament
+     * @return Form Form yang sudah dikonfigurasi
+     */
     public function form(Form $form): Form
     {
         $integerTypes = ['integer', 'tinyInteger', 'smallInteger', 'mediumInteger', 'bigInteger'];
@@ -130,17 +190,15 @@ class TableBuilder extends Page
                     Wizard\Step::make(__('table-builder.steps.columns'))
                         ->icon('heroicon-o-table-cells')
                         ->schema([
-                            // REFACTORED REPEATER COMPONENT
                             Forms\Components\Repeater::make('columns')
-                                ->label(false) // Label is now implicit
+                                ->label('')
                                 ->minItems(1)
                                 ->reorderable(true)
-                                ->collapsible() // <-- ADDED: Makes items collapsible
-                                ->collapsed()   // <-- ADDED: New items are collapsed by default
-                                ->addActionLabel(__('table-builder.add_column')) // <-- ADDED: Custom button text
-                                ->itemLabel(fn(array $state): ?string => ($state['name'] ?? __('table-builder.steps.columns')) . ' : ' . ($state['type'] ?? '...')) // <-- ADDED: Dynamic title
+                                ->collapsible()
+                                ->collapsed()
+                                ->addActionLabel(__('table-builder.add_column'))
+                                ->itemLabel(fn(array $state): ?string => ($state['name'] ?? __('table-builder.steps.columns')) . ' : ' . ($state['type'] ?? '...'))
                                 ->schema([
-                                    // The inner schema remains the same, wrapped in a Section for better visuals
                                     Section::make()->schema([
                                         Grid::make(6)->schema([
                                             Forms\Components\TextInput::make('name')
@@ -165,38 +223,29 @@ class TableBuilder extends Page
                                                 ->searchable()
                                                 ->live()
                                                 ->options([
-                                                    // strings
                                                     'string' => 'varchar',
                                                     'char' => 'char',
                                                     'text' => 'text',
                                                     'mediumText' => 'mediumText',
                                                     'longText' => 'longText',
-                                                    // integers
                                                     'integer' => 'integer',
                                                     'tinyInteger' => 'tinyInteger',
                                                     'smallInteger' => 'smallInteger',
                                                     'mediumInteger' => 'mediumInteger',
                                                     'bigInteger' => 'bigInteger',
-                                                    // numeric
                                                     'decimal' => 'decimal',
                                                     'float' => 'float',
                                                     'double' => 'double',
-                                                    // boolean
                                                     'boolean' => 'boolean',
-                                                    // date/time
                                                     'date' => 'date',
                                                     'time' => 'time',
                                                     'datetime' => 'datetime',
                                                     'timestamp' => 'timestamp',
-                                                    // ids
                                                     'uuid' => 'uuid',
                                                     'ulid' => 'ulid',
-                                                    // json
                                                     'json' => 'json',
-                                                    // enum/set
                                                     'enum' => 'enum',
                                                     'set' => 'set',
-                                                    // foreign
                                                     'foreignId' => 'foreignId',
                                                 ])
                                                 ->default('string')
@@ -220,7 +269,6 @@ class TableBuilder extends Page
                                             ])->default(null),
                                         ]),
                                         Grid::make(6)->schema([
-                                            // Select dropdown for Date/DateTime/Timestamp fields
                                             Forms\Components\Select::make('default')
                                                 ->label(__('table-builder.default_value'))
                                                 ->visible(fn($get) => in_array($get('type'), ['date', 'datetime', 'timestamp'], true))
@@ -247,7 +295,6 @@ class TableBuilder extends Page
                                                 ->placeholder(__('table-builder.default_placeholder_select'))
                                                 ->helperText(__('table-builder.default_helper_datetime')),
 
-                                            // Select dropdown for UUID/ULID fields
                                             Forms\Components\Select::make('default')
                                                 ->label(__('table-builder.default_value'))
                                                 ->visible(fn($get) => in_array($get('type'), ['uuid', 'ulid'], true))
@@ -262,7 +309,6 @@ class TableBuilder extends Page
                                                 ->placeholder(__('table-builder.default_placeholder_select'))
                                                 ->helperText(__('table-builder.default_helper_uuid')),
 
-                                            // Text input for other field types (existing functionality)
                                             Forms\Components\TextInput::make('default')
                                                 ->label(__('table-builder.default_value'))
                                                 ->visible(fn($get) => !in_array($get('type'), ['boolean', 'date', 'datetime', 'timestamp', 'uuid', 'ulid'], true))
@@ -270,7 +316,6 @@ class TableBuilder extends Page
                                                 ->placeholder(__('table-builder.default_placeholder_text'))
                                                 ->helperText(__('table-builder.default_helper_text')),
 
-                                            // Toggle for boolean fields (existing functionality)
                                             Forms\Components\Toggle::make('default_bool')
                                                 ->label(__('table-builder.default_boolean'))
                                                 ->visible(fn($get) => $get('type') === 'boolean')
@@ -338,22 +383,27 @@ class TableBuilder extends Page
             ->statePath('data');
     }
 
+    /**
+     * Handler untuk perubahan step wizard
+     *
+     * Method ini melakukan validasi sebelum berpindah step dan
+     * mengatur auto-preview ketika mencapai step preview
+     *
+     * @param int $step Nomor step yang akan dituju
+     * @return void
+     */
     public function handleWizardStepChanged($step): void
     {
-        // Validate current step before allowing progression
         if ($this->currentStep === 0 && $step > 0) {
-            // Validate table info step
             $data = $this->form->getState();
 
             if (empty($data['table'] ?? null)) {
-                // Show validation error and prevent step change
                 Notification::make()
                     ->title('Validasi Gagal')
                     ->body('Nama tabel wajib diisi')
                     ->danger()
                     ->send();
 
-                // Reset to current step to prevent progression
                 $this->dispatch('wizard-step-changed', ['step' => 0]);
                 return;
             }
@@ -361,14 +411,12 @@ class TableBuilder extends Page
 
         $this->currentStep = $step;
 
-        // Auto-generate preview when reaching the preview step (step 4, 0-indexed as 3)
         if ($step === 3) {
             $this->dispatch('browser-event', [
                 'name' => 'set-preview-step',
                 'data' => ['isPreviewStep' => true]
             ]);
 
-            // Small delay to ensure the view is rendered
             $this->dispatch('delayed-preview');
         } else {
             $this->dispatch('browser-event', [
@@ -378,6 +426,16 @@ class TableBuilder extends Page
         }
     }
 
+    /**
+     * Generate preview tabel dan migration SQL
+     *
+     * Method ini membuat:
+     * 1. Preview visual struktur tabel
+     * 2. Preview kode migration SQL
+     *
+     * @param bool $silent True untuk tidak menampilkan notifikasi
+     * @return void
+     */
     public function previewTable(bool $silent = true): void
     {
         if ($this->previewLoading) {
@@ -389,20 +447,16 @@ class TableBuilder extends Page
         try {
             $service = app(TableBuilderService::class);
 
-            // Get current form state without validation first
             $state = $this->form->getRawState();
 
-            // Guard: if not ready, quietly exit (no notifications)
             if (blank($state['table']) || empty($state['columns'])) {
                 $this->tablePreview = null;
                 $this->data['preview'] = null;
                 return;
             }
 
-            // Clean up the state
             $state = array_filter($state, fn($value) => $value !== null && $value !== '');
 
-            // Check duplicates
             $names = array_filter(array_map(fn($c) => $c['name'] ?? '', $state['columns'] ?? []));
             if (count($names) !== count(array_unique($names))) {
                 if (!$silent) {
@@ -414,7 +468,6 @@ class TableBuilder extends Page
                 return;
             }
 
-            // Generate migration preview
             try {
                 $result = $service->preview($state);
                 $this->data['preview'] = $result['preview'] ?? 'No preview generated';
@@ -423,7 +476,6 @@ class TableBuilder extends Page
                 $this->data['preview'] = 'Error generating migration preview: ' . $e->getMessage();
             }
 
-            // Visual table preview
             $this->tablePreview = $this->generateTablePreview($state);
 
             if (!$silent) {
@@ -460,9 +512,21 @@ class TableBuilder extends Page
         }
     }
 
+    /**
+     * Membuat tabel baru di database berdasarkan form yang diisi
+     *
+     * Method ini melakukan:
+     * 1. Validasi form
+     * 2. Cek duplikasi nama kolom
+     * 3. Cek eksistensi tabel
+     * 4. Eksekusi pembuatan tabel
+     * 5. Reset wizard setelah sukses
+     *
+     * @param TableBuilderService $service Service untuk membuat tabel
+     * @return void
+     */
     public function createTable(TableBuilderService $service): void
     {
-        // Prevent multiple simultaneous table creation
         if ($this->previewLoading) {
             return;
         }
@@ -470,11 +534,9 @@ class TableBuilder extends Page
         $this->previewLoading = true;
 
         try {
-            // Get and validate form state
             $this->form->validate();
             $state = $this->form->getState();
 
-            // Check for duplicate column names
             $names = array_map(fn($c) => $c['name'] ?? '', $state['columns'] ?? []);
             $names = array_filter($names);
 
@@ -486,7 +548,6 @@ class TableBuilder extends Page
                 return;
             }
 
-            // Check if table already exists
             if (Schema::hasTable($state['table'])) {
                 Notification::make()
                     ->danger()
@@ -501,24 +562,20 @@ class TableBuilder extends Page
                 'columns_count' => count($state['columns'] ?? [])
             ]);
 
-            // Create the table using the service
             $result = $service->create($state);
 
-            // Log the creation
             Log::info('Table created successfully', [
                 'table' => $state['table'],
                 'result' => $result
             ]);
 
-            // Show success notification
             Notification::make()
                 ->title(__('table-builder.notifications.table_created'))
                 ->body(__('table-builder.notifications.table_created_body', ['table' => $state['table']]))
                 ->success()
-                ->duration(5000) // Show for 5 seconds
+                ->duration(5000)
                 ->send();
 
-            // Reset the form and wizard
             $this->resetWizard();
         } catch (\Exception $e) {
             Log::error('Table Creation Error', [
@@ -531,7 +588,7 @@ class TableBuilder extends Page
                 ->danger()
                 ->title(__('table-builder.notifications.table_creation_failed'))
                 ->body($e->getMessage())
-                ->persistent() // Keep notification until dismissed
+                ->persistent()
                 ->send();
         } finally {
             $this->previewLoading = false;
@@ -539,19 +596,19 @@ class TableBuilder extends Page
     }
 
     /**
-     * Reset the wizard form to step 1 and clear all data
+     * Mereset wizard ke step awal dan membersihkan semua data
+     *
+     * @return void
      */
     public function resetWizard(): void
     {
         try {
-            // Clear all form data
             $this->data = [];
             $this->preview = null;
             $this->tablePreview = null;
             $this->previewLoading = false;
             $this->currentStep = 0;
 
-            // Reset form to initial state
             $this->form->fill([
                 'timestamps' => true,
                 'soft_deletes' => false,
@@ -566,7 +623,6 @@ class TableBuilder extends Page
                 ],
             ]);
 
-            // Dispatch events to reset the wizard UI
             $this->dispatch('reset-wizard-to-step-one');
             $this->dispatch('form-reset-complete');
 
@@ -578,11 +634,21 @@ class TableBuilder extends Page
         }
     }
 
+    /**
+     * Generate preview visual tabel untuk ditampilkan di UI
+     *
+     * Method ini membuat data preview yang berisi:
+     * - Header kolom dengan tipe dan metadata
+     * - 5 baris sample data
+     * - Kolom timestamp dan soft delete jika diaktifkan
+     *
+     * @param array<string, mixed> $state Data form state
+     * @return array<string, mixed> Data preview tabel
+     */
     protected function generateTablePreview(array $state): array
     {
         $columns = $state['columns'] ?? [];
 
-        // Debug: Add logging to see what we're getting
         Log::info('Table Preview Debug', [
             'columns_count' => count($columns),
             'columns_data' => $columns,
@@ -600,15 +666,13 @@ class TableBuilder extends Page
         $headers = [];
         $sampleRows = [];
 
-        // Generate headers with metadata
         foreach ($columns as $index => $column) {
-            // Ensure we have required fields
             if (empty($column['name']) || empty($column['type'])) {
                 Log::warning('Column missing required fields', [
                     'index' => $index,
                     'column' => $column
                 ]);
-                continue; // Skip malformed columns
+                continue;
             }
 
             $metadata = [];
@@ -642,7 +706,6 @@ class TableBuilder extends Page
             ];
         }
 
-        // Check if we have any valid headers
         if (empty($headers)) {
             return [
                 'error' => true,
@@ -651,11 +714,9 @@ class TableBuilder extends Page
             ];
         }
 
-        // Generate 5 sample rows
         for ($i = 1; $i <= 5; $i++) {
             $row = [];
             foreach ($columns as $column) {
-                // Skip malformed columns
                 if (empty($column['name']) || empty($column['type'])) {
                     continue;
                 }
@@ -664,7 +725,6 @@ class TableBuilder extends Page
             $sampleRows[] = $row;
         }
 
-        // Add timestamp columns if enabled
         if (!empty($state['timestamps'])) {
             $headers[] = [
                 'name' => 'created_at',
@@ -684,7 +744,6 @@ class TableBuilder extends Page
             }
         }
 
-        // Add soft delete column if enabled
         if (!empty($state['soft_deletes'])) {
             $headers[] = [
                 'name' => 'deleted_at',
@@ -693,7 +752,7 @@ class TableBuilder extends Page
             ];
 
             for ($i = 0; $i < 5; $i++) {
-                $sampleRows[$i][] = null; // All sample rows are not deleted
+                $sampleRows[$i][] = null;
             }
         }
 
@@ -709,11 +768,17 @@ class TableBuilder extends Page
         ];
     }
 
+    /**
+     * Generate sample value untuk preview berdasarkan tipe kolom
+     *
+     * @param array<string, mixed> $column Definisi kolom
+     * @param int $index Index baris untuk variasi data
+     * @return string Sample value untuk ditampilkan
+     */
     protected function generateSampleValue(array $column, int $index): string
     {
         $type = $column['type'];
 
-        // Handle default values first
         if (isset($column['default']) && $column['default'] !== null && $column['default'] !== '') {
             return $column['default'];
         }
@@ -739,31 +804,63 @@ class TableBuilder extends Page
         };
     }
 
+    /**
+     * Handler untuk perubahan data kolom
+     *
+     * Auto-refresh preview jika sedang di step preview
+     *
+     * @return void
+     */
     public function updatedDataColumns(): void
     {
         if ($this->currentStep === 3) {
-            $this->previewTable(); // default is silent
+            $this->previewTable();
         }
     }
 
+    /**
+     * Memeriksa apakah sedang berada di step preview
+     *
+     * @return bool True jika sedang di step preview
+     */
     protected function isOnPreviewStep(): bool
     {
         return $this->currentStep === 3;
     }
 
+    /**
+     * Handler untuk perubahan data form
+     *
+     * Auto-refresh preview jika perubahan terjadi di kolom dan sedang di step preview
+     *
+     * @param string $property Nama property yang berubah
+     * @param mixed $value Nilai baru
+     * @return void
+     */
     public function updatedData($property, $value): void
     {
-        // When columns change and we're on preview step, refresh
         if (Str::startsWith($property, 'columns') && $this->isOnPreviewStep()) {
             $this->dispatch('refresh-preview');
         }
     }
 
+    /**
+     * Handler untuk event refresh preview
+     *
+     * @return void
+     */
     public function handleRefreshPreview(): void
     {
-        $this->previewTable(); // silent
+        $this->previewTable();
     }
-    // Add this method to your TableBuilder class for debugging
+
+    /**
+     * Method debugging untuk troubleshooting preview
+     *
+     * Mencatat detail state dan hasil preview ke log
+     *
+     * @return void
+     */
     public function debugPreview(): void
     {
         Log::info('Debug Preview Called');
@@ -779,7 +876,6 @@ class TableBuilder extends Page
                 'full_state' => $state
             ]);
 
-            // Test the service
             $result = $service->preview($state);
             Log::info('Service preview result', ['result' => $result]);
 

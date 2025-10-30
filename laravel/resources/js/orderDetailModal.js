@@ -1,6 +1,3 @@
-// Order detail modal logic: provides window.openOrderDetailModal(siteId)
-// and window.closeOrderDetailModal().
-
 (function () {
     const state = { requestToken: 0 };
     const FIELD_LAYOUT = [
@@ -227,7 +224,7 @@
     };
 
     window.closeOrderDetailModal = function () {
-        state.requestToken += 1; // cancel pending
+        state.requestToken += 1;
         closeModalShell();
         resetView();
     };

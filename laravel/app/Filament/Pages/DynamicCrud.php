@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Pages;
 
 use App\Models\DynamicModel;
@@ -40,6 +42,30 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Validator;
 
+/**
+ * Halaman Dynamic CRUD
+ *
+ * Halaman Filament yang menyediakan antarmuka CRUD (Create, Read, Update, Delete) dinamis
+ * untuk mengelola tabel-tabel database secara langsung melalui panel admin. Mendukung
+ * pemilihan tabel secara dinamis, validasi berbasis skema, penanganan foreign key,
+ * operasi bulk, ekspor data, dan audit logging.
+ *
+ * Fitur utama:
+ * - Pemilihan tabel dinamis dari whitelist yang tersedia
+ * - Form builder otomatis berdasarkan struktur tabel
+ * - Validasi skema dengan pesan error yang user-friendly
+ * - Dukungan relasi foreign key dan embedded creation
+ * - Kustomisasi kolom tampilan per tabel
+ * - Operasi bulk delete dengan validasi constraint
+ * - Ekspor data ke format CSV
+ * - Audit logging untuk semua operasi CRUD
+ * - Perlindungan soft delete dan system table
+ *
+ * @package App\Filament\Pages
+ * @author  CTO CRUD App Team
+ * @version 1.0
+ * @since   1.0.0
+ */
 class DynamicCrud extends Page implements HasTable, HasForms
 {
     use InteractsWithTable;
@@ -53,17 +79,31 @@ class DynamicCrud extends Page implements HasTable, HasForms
     protected static ?string $title = 'CTO CRUD';
     protected static ?string $slug = '/';
 
-    // Header selector form
+
     public ?array $config = [];
+
     public ?string $selectedTable = null;
+
     /**
-     * Per-table selected fields for listing view.
-     * Keys:
-     *  - self:{column}
-     *  - fk:{fk_column}:{ref_table}:{ref_column}
+     * Daftar kolom yang dipilih untuk ditampilkan per tabel
+     *
+     * Format key:
+     * - self:{column} untuk kolom dari tabel sendiri
+     * - fk:{fk_column}:{ref_table}:{ref_column} untuk kolom dari tabel relasi
+     *
+     * @var array<string, array<int, string>>
      */
     public array $tableFieldSelections = [];
 
+    /**
+     * Mengecek apakah user yang sedang login memiliki akses ke halaman ini
+     *
+     * Hanya user dengan role 'admin' yang dapat mengakses halaman Dynamic CRUD.
+     * Method ini melakukan defensive checking untuk memastikan guard yang digunakan
+     * adalah model User yang memiliki method hasRole.
+     *
+     * @return bool True jika user memiliki akses, false jika tidak
+     */
     public static function canAccess(): bool
     {
         if (!Auth::check()) {
@@ -72,19 +112,33 @@ class DynamicCrud extends Page implements HasTable, HasForms
 
         $u = Auth::user();
 
-        // Be defensive for static analysers and custom guards
         return $u instanceof \App\Models\User
             && \method_exists($u, 'hasRole')
             && $u->hasRole('admin');
     }
 
+    /**
+     * Mengecek apakah halaman ini harus ditampilkan di navigasi
+     *
+     * @return bool True jika halaman harus muncul di menu navigasi
+     */
     public static function shouldRegisterNavigation(): bool
     {
         return self::canAccess();
     }
 
     /**
-     * Keep constructor injection minimal; mount resolves services.
+     * Inisialisasi halaman saat pertama kali dimuat
+     *
+     * Method ini dipanggil oleh Livewire lifecycle dan digunakan untuk:
+     * - Melakukan pengecekan akses
+     * - Mengambil daftar tabel yang tersedia dari whitelist
+     * - Mengatur tabel default jika belum ada yang dipilih
+     * - Menginisialisasi form dengan nilai default
+     *
+     * @param TableBuilderService $svc Service untuk mengambil daftar tabel
+     * @return void
+     * @throws \Symfony\Component\HttpKernel\Exception\HttpException Jika user tidak memiliki akses
      */
     public function mount(TableBuilderService $svc): void
     {
@@ -92,7 +146,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             abort(403);
         }
 
-        // Whitelisted tables only
         $tables = $svc->listUserTables();
         if (!$this->selectedTable && !empty($tables)) {
             $this->selectedTable = $tables[0];
@@ -101,6 +154,15 @@ class DynamicCrud extends Page implements HasTable, HasForms
         $this->form->fill(['table' => $this->selectedTable]);
     }
 
+    /**
+     * Mendefinisikan form untuk pemilihan tabel
+     *
+     * Form ini berisi dropdown untuk memilih tabel dari daftar whitelist yang tersedia.
+     * Saat tabel dipilih, halaman akan di-refresh untuk menampilkan data dari tabel tersebut.
+     *
+     * @param Form $form Instance form dari Filament
+     * @return Form Form yang telah dikonfigurasi
+     */
     public function form(Form $form): Form
     {
         return $form
@@ -109,7 +171,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ->label('Pilih tabel')
                     ->searchable()
                     ->options(function () {
-                        // Use table whitelist as options
                         $tables = app(TableBuilderService::class)->listUserTables();
                         return array_combine($tables, $tables);
                     })
@@ -117,7 +178,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     ->afterStateUpdated(function (?string $state) {
                         $safe = app(DynamicSchemaService::class)->sanitizeTable($state);
                         $this->selectedTable = $safe;
-                        // Force table to refresh its query/columns
                         $this->resetTable();
                     })
                     ->helperText('Pilih tabel database yang ingin dikelola. Tabel baru akan muncul secara otomatis.'),
@@ -125,6 +185,19 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->statePath('config');
     }
 
+    /**
+     * Mendefinisikan tabel untuk menampilkan data CRUD
+     *
+     * Tabel ini secara dinamis menampilkan data dari tabel yang dipilih dengan:
+     * - Query builder dinamis dengan dukungan join untuk foreign key
+     * - Kolom yang dapat dikustomisasi per tabel
+     * - Filter untuk soft delete
+     * - Actions untuk Create, Edit, Delete, Export
+     * - Bulk actions untuk operasi massal
+     *
+     * @param Table $table Instance table dari Filament
+     * @return Table Table yang telah dikonfigurasi
+     */
     public function table(Table $table): Table
     {
         return $table
@@ -134,7 +207,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->headerActions($this->buildHeaderActions())
             ->actions($this->buildRowActions())
             ->bulkActions($this->buildBulkActions())
-            // Hide the toggle-columns dropdown trigger button
             ->toggleColumnsTriggerAction(fn(Action $action) => $action->hidden())
             ->emptyStateHeading($this->selectedTable ? 'Tidak ada data ditemukan' : 'Pilih tabel untuk memulai')
             ->emptyStateDescription($this->selectedTable
@@ -145,12 +217,31 @@ class DynamicCrud extends Page implements HasTable, HasForms
             ->paginated([10, 25, 50, 100]);
     }
 
+    /**
+     * Membuat query runtime untuk tabel yang dipilih
+     *
+     * Query ini dibangun secara dinamis dengan dukungan join untuk foreign key
+     * berdasarkan kolom yang dipilih untuk ditampilkan.
+     *
+     * @return Builder Query builder Eloquent untuk tabel yang dipilih
+     */
     protected function getRuntimeQuery(): Builder
     {
         $qb = app(DynamicQueryBuilder::class);
         return $qb->build($this->selectedTable, $this->selectedFieldsForTable());
     }
 
+    /**
+     * Menghasilkan definisi kolom tabel secara dinamis
+     *
+     * Method ini membuat kolom-kolom Filament berdasarkan:
+     * - Kolom yang dipilih user (atau default 20 kolom pertama)
+     * - Tipe data kolom (boolean, date, json, enum, dll)
+     * - Status kolom (primary key, indexed, dll)
+     * - Relasi foreign key
+     *
+     * @return array<int, \Filament\Tables\Columns\Column> Array kolom Filament
+     */
     protected function inferTableColumns(): array
     {
         if (!$this->selectedTable) {
@@ -223,6 +314,16 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return $filamentColumns;
     }
 
+    /**
+     * Membangun actions untuk header tabel
+     *
+     * Actions yang tersedia:
+     * - Pilih Kolom: Memilih kolom mana yang ingin ditampilkan
+     * - Tambah Data: Membuat record baru dengan validasi skema
+     * - Ekspor CSV: Mengekspor data tabel ke format CSV
+     *
+     * @return array<int, Action> Array actions untuk header tabel
+     */
     protected function buildHeaderActions(): array
     {
         return [
@@ -234,7 +335,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->modalSubmitActionLabel('Terapkan')
                 ->form(function () {
                     $schema = [];
-                    // Self table fields
                     $selfOptions = [];
                     foreach (array_keys($this->getColumnMeta()) as $col) {
                         $selfOptions['self:' . $col] = $col;
@@ -248,7 +348,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
                                 ->default(array_values(array_filter($this->selectedFieldsForTable(), fn($k) => str_starts_with($k, 'self:')))),
                         ]);
 
-                    // Related fields grouped by FK
                     $fkMap = app(DynamicSchemaService::class)->foreignKeys($this->selectedTable);
                     foreach ($fkMap as $fkCol => $ref) {
                         $refTable = $ref['referenced_table'];
@@ -301,19 +400,15 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->form(fn() => $this->inferFormSchema(false))
                 ->using(function (array $data): Model {
                     try {
-                        // Validate against schema (cached)
                         $rules = $this->buildValidationRules(false);
                         Validator::make($data, $rules)->validate();
 
-                        // Resolve any embedded FK fields (from relation label columns) into actual FK IDs
                         $this->resolveEmbeddedForeigns($data);
 
-                        // Normalize JSON columns: Filament KeyValue returns array; ensure DB gets JSON string
                         try {
                             $colsMeta = app(DynamicSchemaService::class)->columns($this->selectedTable);
                             foreach ($colsMeta as $colName => $meta) {
                                 if (($meta['type'] ?? null) === 'json' && isset($data[$colName]) && is_array($data[$colName])) {
-                                    // Remove empty placeholder rows (keys or values null/empty)
                                     $clean = [];
                                     foreach ($data[$colName] as $k => $v) {
                                         if ($k === null || $k === '' || $v === '' || $v === null) continue;
@@ -323,7 +418,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
                                 }
                             }
                         } catch (\Throwable $e) {
-                            // Fallback: do not block creation if normalization fails
                         }
 
                         $model = new DynamicModel();
@@ -335,11 +429,11 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     } catch (ValidationException $ve) {
                         $msg = $this->firstValidationMessage($ve);
                         Notification::make()->danger()->title('Input tidak valid')->body($msg)->send();
-                        throw $ve; // Let Filament highlight fields as well (keeps modal open)
+                        throw $ve;
                     } catch (QueryException $qe) {
                         [$t, $b] = $this->friendlyDbError($qe);
                         Notification::make()->danger()->title($t)->body($b)->send();
-                        throw new Halt(); // keep modal open, no success toast
+                        throw new Halt();
                     }
 
                     $this->audit('record.created', [
@@ -360,6 +454,15 @@ class DynamicCrud extends Page implements HasTable, HasForms
         ];
     }
 
+    /**
+     * Membangun actions untuk setiap baris data
+     *
+     * Actions yang tersedia untuk setiap record:
+     * - Edit: Mengubah data dengan validasi skema
+     * - Delete: Menghapus data dengan pengecekan constraint
+     *
+     * @return array<int, Action> Array actions untuk baris tabel
+     */
     protected function buildRowActions(): array
     {
         return [
@@ -371,16 +474,13 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->form(fn($record) => $this->inferFormSchema(true))
                 ->using(function (Model $record, array $data) {
                     try {
-                        // Validate against schema (cached)
                         $rules = $this->buildValidationRules(true);
                         Validator::make($data, $rules)->validate();
 
-                        // No embedded creation on edit; ignore any stray embedded keys
                         $this->stripEmbeddedForeigns($data);
 
                         $this->applySafeDefaults($data, true);
 
-                        // Normalize JSON columns on edit too
                         try {
                             $colsMeta = app(DynamicSchemaService::class)->columns($this->selectedTable);
                             foreach ($colsMeta as $colName => $meta) {
@@ -393,12 +493,11 @@ class DynamicCrud extends Page implements HasTable, HasForms
                                         }
                                         $data[$colName] = $clean ? json_encode($clean, JSON_UNESCAPED_UNICODE) : null;
                                     } elseif ($data[$colName] === '') {
-                                        $data[$colName] = null; // treat empty string as null for json
+                                        $data[$colName] = null;
                                     }
                                 }
                             }
                         } catch (\Throwable $e) {
-                            // ignore normalization issues
                         }
 
                         $record->fill($data);
@@ -406,7 +505,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                     } catch (ValidationException $ve) {
                         $msg = $this->firstValidationMessage($ve);
                         Notification::make()->danger()->title('Input tidak valid')->body($msg)->send();
-                        throw $ve; // keeps modal open and highlights fields
+                        throw $ve;
                     } catch (QueryException $qe) {
                         [$t, $b] = $this->friendlyDbError($qe);
                         Notification::make()->danger()->title($t)->body($b)->send();
@@ -431,7 +530,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ->modalCancelActionLabel('Batal')
                 ->visible(fn() => !$this->isSystemTable($this->selectedTable))
                 ->using(function (Model $record) {
-                    // Schema-aware guard: block delete when restricted by FK constraints
                     $blocked = $this->hasRestrictingIncomingReferences($record->{$this->primaryKeyName()});
                     if ($blocked) {
                         Notification::make()
@@ -439,7 +537,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
                             ->title('Tidak dapat menghapus')
                             ->body('Record ini direferensikan oleh tabel lain (ON DELETE RESTRICT/NO ACTION).')
                             ->send();
-                        return $record; // do not delete
+                        return $record;
                     }
 
                     try {
@@ -460,6 +558,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
         ];
     }
 
+    /**
+     * Membangun bulk actions untuk operasi massal
+     *
+     * Bulk actions yang tersedia:
+     * - Delete: Menghapus multiple records sekaligus dengan validasi constraint
+     *
+     * @return array<int, BulkAction> Array bulk actions
+     */
     protected function buildBulkActions(): array
     {
         return [
@@ -506,6 +612,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
         ];
     }
 
+    /**
+     * Membangun filters untuk tabel
+     *
+     * Filter yang tersedia:
+     * - Soft Delete Filter: Jika tabel memiliki kolom deleted_at
+     *
+     * @return array<int, \Filament\Tables\Filters\BaseFilter> Array filters
+     */
     protected function buildFilters(): array
     {
         $filters = [];
@@ -526,12 +640,24 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return $filters;
     }
 
+    /**
+     * Menghasilkan form schema secara dinamis berdasarkan struktur tabel
+     *
+     * @param bool $isEdit True jika form untuk edit, false untuk create
+     * @param bool $forView True jika form untuk view only
+     * @return array<int, \Filament\Forms\Components\Component> Array komponen form
+     */
     protected function inferFormSchema(bool $isEdit, bool $forView = false): array
     {
         if (!$this->selectedTable) return [];
         return app(DynamicFormService::class)->buildForm($this->selectedTable, $isEdit, $forView);
     }
 
+    /**
+     * Mendapatkan daftar kolom yang dipilih untuk ditampilkan
+     *
+     * @return array<int, string> Array key kolom yang dipilih
+     */
     protected function selectedFieldsForTable(): array
     {
         if (!$this->selectedTable) {
@@ -540,16 +666,37 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return $this->tableFieldSelections[$this->selectedTable] ?? [];
     }
 
+    /**
+     * Membuat alias untuk join table
+     *
+     * @param string $fkCol Nama kolom foreign key
+     * @param string $refTable Nama tabel yang direferensikan
+     * @return string Alias untuk join table
+     */
     protected function aliasForJoin(string $fkCol, string $refTable): string
     {
         return $refTable . '__' . $fkCol;
     }
 
+    /**
+     * Membuat alias untuk kolom dari join table
+     *
+     * @param string $fkCol Nama kolom foreign key
+     * @param string $refTable Nama tabel yang direferensikan
+     * @param string $refCol Nama kolom di tabel yang direferensikan
+     * @return string Alias untuk kolom join
+     */
     protected function aliasForJoinColumn(string $fkCol, string $refTable, string $refCol): string
     {
         return 'fk_' . $fkCol . '__' . $refTable . '__' . $refCol;
     }
 
+    /**
+     * Mendapatkan mapping foreign key untuk tabel
+     *
+     * @param string $table Nama tabel
+     * @return array<string, array{referenced_table: string, referenced_column: string}> Map foreign key
+     */
     protected function getForeignKeyMap(string $table): array
     {
         try {
@@ -579,6 +726,11 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return $map;
     }
 
+    /**
+     * Mengecek apakah primary key adalah auto increment
+     *
+     * @return bool True jika primary key auto increment
+     */
     protected function isPrimaryAutoIncrement(): bool
     {
         $pk = $this->primaryKeyName();
@@ -602,10 +754,15 @@ class DynamicCrud extends Page implements HasTable, HasForms
             }
         }
 
-        // Heuristic fallback
         return $pk === 'id' && in_array($type, ['integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true);
     }
 
+    /**
+     * Mendapatkan pesan error pertama dari ValidationException
+     *
+     * @param ValidationException $ve Exception validasi
+     * @return string Pesan error pertama
+     */
     protected function firstValidationMessage(ValidationException $ve): string
     {
         try {
@@ -616,21 +773,30 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 }
             }
         } catch (\Throwable $e) {
-            // Fallback
         }
         return 'Input tidak valid.';
     }
 
+    /**
+     * Menerapkan default values yang aman untuk data
+     *
+     * Method ini:
+     * - Menghapus system columns (created_at, updated_at, deleted_at)
+     * - Menghapus primary key saat edit
+     * - Menambahkan timestamps otomatis saat create
+     *
+     * @param array<string, mixed> &$data Data yang akan dimodifikasi (passed by reference)
+     * @param bool $isEdit True jika operasi edit, false jika create
+     * @return void
+     */
     protected function applySafeDefaults(array &$data, bool $isEdit): void
     {
-        // Remove system columns and immutable primary when editing
         foreach (array_keys($data) as $key) {
             if ($this->isSystemColumn($key) || ($isEdit && $this->isPrimaryKey($key))) {
                 unset($data[$key]);
             }
         }
 
-        // Autofill created_at and updated_at if the table has those columns and it's a create action
         if (!$isEdit && $this->selectedTable) {
             if (\Illuminate\Support\Facades\Schema::hasColumn($this->selectedTable, 'created_at')) {
                 $data['created_at'] = now();
@@ -642,9 +808,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
     }
 
     /**
-     * Convert embedded FK label fields into real FK IDs on create. Keys look like
-     * fk_new__{fk_col}__{ref_table}__{label_col}. We attempt to find an existing
-     * row by all label columns; if not found, we insert a new row and set the FK.
+     * Menyelesaikan embedded foreign key fields saat create record
+     *
+     * Method ini mengkonversi field dengan format fk_new__{fk_col}__{ref_table}__{label_col}
+     * menjadi nilai foreign key yang sebenarnya. Jika record dengan nilai label tersebut
+     * sudah ada, akan digunakan ID-nya. Jika belum ada, akan dibuat record baru.
+     *
+     * @param array<string, mixed> &$data Data form yang akan dimodifikasi (passed by reference)
+     * @return void
      */
     protected function resolveEmbeddedForeigns(array &$data): void
     {
@@ -654,7 +825,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             $refPk = $ref['referenced_column'] ?? 'id';
             if (!$refTable) continue;
 
-            // Collect embedded fields
             $prefix = 'fk_new__' . $fkCol . '__' . $refTable . '__';
             $labelFields = [];
             foreach ($data as $k => $v) {
@@ -665,7 +835,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             }
             if (empty($labelFields)) continue;
 
-            // Try to locate existing row by exact match on provided label columns
             $q = DB::table($refTable);
             foreach ($labelFields as $col => $val) {
                 if (Schema::hasColumn($refTable, $col)) {
@@ -676,10 +845,8 @@ class DynamicCrud extends Page implements HasTable, HasForms
             if ($existing && isset($existing->{$refPk})) {
                 $data[$fkCol] = $existing->{$refPk};
             } else {
-                // Insert and set FK
                 $isAuto = app(DynamicSchemaService::class)->isPrimaryAutoIncrement($refTable);
                 if (!$isAuto && !isset($labelFields[$refPk]) && Schema::hasColumn($refTable, $refPk)) {
-                    // Cannot infer PK; skip creating
                     continue;
                 }
                 $payload = $labelFields;
@@ -693,13 +860,21 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 }
             }
 
-            // Cleanup embedded fields from payload
             foreach (array_keys($labelFields) as $c) {
                 unset($data[$prefix . $c]);
             }
         }
     }
 
+    /**
+     * Menghapus embedded foreign key fields dari data
+     *
+     * Digunakan saat edit untuk menghindari pemrosesan embedded fields
+     * karena embedded creation hanya diperbolehkan saat create.
+     *
+     * @param array<string, mixed> &$data Data yang akan dibersihkan (passed by reference)
+     * @return void
+     */
     protected function stripEmbeddedForeigns(array &$data): void
     {
         foreach (array_keys($data) as $k) {
@@ -708,12 +883,17 @@ class DynamicCrud extends Page implements HasTable, HasForms
     }
 
     /**
-     * Build Laravel validation rules derived from the current table schema.
-     * - required for non-nullable, unless auto-increment PK on create
-     * - numeric rules for integer/decimal types
-     * - date rules for date/time types
-     * - string length max for varchar/char
-     * - exists rule for foreign keys
+     * Membangun rules validasi Laravel berdasarkan skema tabel
+     *
+     * Rules yang dihasilkan mencakup:
+     * - required untuk kolom non-nullable (kecuali auto-increment PK saat create)
+     * - numeric untuk tipe integer/decimal
+     * - date rules untuk tipe date/time
+     * - string max length untuk varchar/char
+     * - exists rules untuk foreign keys
+     *
+     * @param bool $isEdit True jika validasi untuk edit, false untuk create
+     * @return array<string, mixed> Array validation rules
      */
     protected function buildValidationRules(bool $isEdit): array
     {
@@ -723,45 +903,83 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return app(DynamicFormService::class)->buildRules($this->selectedTable, $isEdit);
     }
 
+    /**
+     * Mengecek apakah kolom adalah primary key
+     *
+     * @param string $column Nama kolom
+     * @return bool True jika kolom adalah primary key
+     */
     protected function isPrimaryKey(string $column): bool
     {
         return $column === $this->primaryKeyName();
     }
 
+    /**
+     * Mendapatkan nama primary key dari tabel
+     *
+     * Menggunakan DynamicSchemaService untuk mendapatkan informasi metadata PK.
+     * Fallback ke 'id' jika tidak dapat ditentukan.
+     *
+     * @return string Nama kolom primary key
+     */
     protected function primaryKeyName(): string
     {
-        // Heuristic: id or {table}_id
         if (!$this->selectedTable) {
             return 'id';
         }
 
-        // Prefer metadata via DynamicSchemaService
         return app(DynamicSchemaService::class)->primaryKey($this->selectedTable);
     }
 
+    /**
+     * Mengecek apakah kolom terlihat seperti foreign key
+     *
+     * Heuristik sederhana: kolom yang berakhiran '_id' dan bukan primary key.
+     *
+     * @param string $column Nama kolom
+     * @return bool True jika kolom seperti foreign key
+     */
     protected function looksLikeForeignKey(string $column): bool
     {
         return Str::endsWith($column, '_id') && $column !== $this->primaryKeyName();
     }
 
+    /**
+     * Mengecek apakah kolom adalah system column
+     *
+     * System columns adalah kolom yang dikelola otomatis oleh framework:
+     * created_at, updated_at, deleted_at
+     *
+     * @param string $name Nama kolom
+     * @return bool True jika kolom adalah system column
+     */
     protected function isSystemColumn(string $name): bool
     {
         return in_array($name, ['created_at', 'updated_at', 'deleted_at'], true);
     }
 
     /**
-     * Map database errors to friendly, actionable messages.
-     * Returns [title, body].
+     * Mengkonversi database error menjadi pesan yang user-friendly
+     *
+     * Method ini mengidentifikasi berbagai jenis error database (MySQL):
+     * - Data too long (1406): Teks terlalu panjang
+     * - Incorrect value: Format angka tidak valid
+     * - Foreign key constraint fails (1452): Referensi tidak ditemukan
+     * - Duplicate entry (1062): Nilai sudah dipakai
+     * - Cannot be null (1048): Isian wajib diisi
+     *
+     * Dan menghasilkan pesan dalam Bahasa Indonesia yang mudah dipahami.
+     *
+     * @param QueryException $e Exception dari query database
+     * @return array{0: string, 1: string} Tuple [title, body] pesan error
      */
     protected function friendlyDbError(QueryException $e): array
     {
-        $sqlState = $e->errorInfo[0] ?? null; // e.g. '23000'
-        $driverCode = (int) ($e->errorInfo[1] ?? 0); // MySQL error number
+        $sqlState = $e->errorInfo[0] ?? null;
+        $driverCode = (int) ($e->errorInfo[1] ?? 0);
         $message = (string) ($e->errorInfo[2] ?? $e->getMessage());
 
-        // Data too long for column -> truncate/length guidance
         if ($driverCode === 1406 || Str::contains($message, ['Data too long for column', 'value too long'])) {
-            // Try to extract column name
             preg_match("/for column '([^']+)'/i", $message, $m);
             $col = $m[1] ?? null;
             $title = 'Teks terlalu panjang';
@@ -771,7 +989,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return [$title, $body];
         }
 
-        // Incorrect integer value / wrong type
         if (Str::contains($message, ['Incorrect integer value', 'Incorrect double value', 'Incorrect decimal value'])) {
             preg_match("/for column '([^']+)'/i", $message, $m);
             $col = $m[1] ?? null;
@@ -782,7 +999,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return [$title, $body];
         }
 
-        // Foreign key constraint fails
         if ($driverCode === 1452 || Str::contains($message, 'foreign key constraint fails')) {
             preg_match("/CONSTRAINT `[^`]+` FOREIGN KEY \(`([^`]+)`\)/i", $message, $m);
             $col = $m[1] ?? null;
@@ -793,7 +1009,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return [$title, $body];
         }
 
-        // Duplicate entry for unique index
         if ($driverCode === 1062 || Str::contains($message, 'Duplicate entry')) {
             preg_match("/Duplicate entry '([^']+)' for key '([^']+)'/i", $message, $m);
             $val = $m[1] ?? null;
@@ -805,7 +1020,6 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return [$title, $body];
         }
 
-        // Cannot be null
         if ($driverCode === 1048 || Str::contains($message, 'cannot be null')) {
             preg_match("/Column '([^']+)' cannot be null/i", $message, $m);
             $col = $m[1] ?? null;
@@ -816,30 +1030,60 @@ class DynamicCrud extends Page implements HasTable, HasForms
             return [$title, $body];
         }
 
-        // Default fallback
         return ['Gagal menyimpan', 'Periksa input Anda dan coba lagi.'];
     }
 
+    /**
+     * Mengecek apakah tabel memiliki kolom deleted_at
+     *
+     * @return bool True jika tabel support soft delete
+     */
     protected function hasDeletedAtColumn(): bool
     {
         return $this->selectedTable && app(DynamicSchemaService::class)->hasDeletedAt($this->selectedTable);
     }
 
+    /**
+     * Membuat qualified column name dengan nama tabel
+     *
+     * @param string $column Nama kolom
+     * @return string Qualified column name (table.column)
+     */
     protected function qualified(string $column): string
     {
         return $this->selectedTable . '.' . $column;
     }
 
+    /**
+     * Menebak kolom yang tepat untuk dijadikan label/display
+     *
+     * @param string $table Nama tabel
+     * @return string Nama kolom yang cocok untuk label
+     */
     protected function guessLabelColumn(string $table): string
     {
         return app(DynamicSchemaService::class)->guessLabelColumn($table);
     }
 
+    /**
+     * Mendapatkan metadata kolom untuk tabel yang sedang dipilih
+     *
+     * @return array<string, array{type: string, nullable: bool, default: mixed}> Map kolom ke metadata
+     */
     protected function getColumnMeta(): array
     {
         return $this->selectedTable ? app(DynamicSchemaService::class)->columns($this->selectedTable) : [];
     }
 
+    /**
+     * Mengecek apakah tabel adalah system table
+     *
+     * System tables adalah tabel yang digunakan oleh framework dan tidak boleh
+     * dimodifikasi melalui Dynamic CRUD, seperti migrations, permissions, dll.
+     *
+     * @param string|null $name Nama tabel
+     * @return bool True jika tabel adalah system table
+     */
     protected function isSystemTable(?string $name): bool
     {
         if (!$name) return true;
@@ -868,7 +1112,14 @@ class DynamicCrud extends Page implements HasTable, HasForms
     }
 
     /**
-     * Check if the given PK value has incoming FK references with DELETE_RULE RESTRICT/NO ACTION.
+     * Mengecek apakah record memiliki referensi incoming dengan DELETE RESTRICT/NO ACTION
+     *
+     * Method ini memeriksa apakah ada tabel lain yang mereferensikan primary key dari
+     * record ini melalui foreign key dengan aturan ON DELETE RESTRICT atau NO ACTION.
+     * Jika ada, record tidak boleh dihapus untuk menjaga integritas referensial.
+     *
+     * @param mixed $pkValue Nilai primary key yang akan dicek
+     * @return bool True jika ada referensi yang memblokir penghapusan
      */
     protected function hasRestrictingIncomingReferences($pkValue): bool
     {
@@ -879,7 +1130,7 @@ class DynamicCrud extends Page implements HasTable, HasForms
         }
 
         if (!in_array($driver, ['mysql', 'mariadb'], true)) {
-            return false; // fallback to DB error behavior
+            return false;
         }
 
         $db = DB::getDatabaseName();
@@ -907,6 +1158,17 @@ class DynamicCrud extends Page implements HasTable, HasForms
         return false;
     }
 
+    /**
+     * Mencatat aktivitas user ke audit log
+     *
+     * Method ini mencatat semua operasi CRUD yang dilakukan user ke tabel admin_audit_logs
+     * untuk keperluan tracking dan compliance. Jika tabel audit tidak ada atau terjadi
+     * error, operasi tidak akan diblokir.
+     *
+     * @param string $action Nama aksi yang dilakukan (e.g., 'record.created', 'record.updated')
+     * @param array<string, mixed> $context Data konteks tambahan untuk audit
+     * @return void
+     */
     protected function audit(string $action, array $context = []): void
     {
         try {
@@ -920,10 +1182,17 @@ class DynamicCrud extends Page implements HasTable, HasForms
                 ]);
             }
         } catch (\Throwable $e) {
-            // Do not block the UI if audit logging fails
         }
     }
 
+    /**
+     * Mengekspor data tabel ke format CSV
+     *
+     * Method ini menggunakan DynamicExportService untuk menghasilkan file CSV
+     * yang dapat di-download oleh user.
+     *
+     * @return \Symfony\Component\HttpFoundation\StreamedResponse|null Response download CSV
+     */
     public function exportCsv()
     {
         $table = $this->selectedTable;

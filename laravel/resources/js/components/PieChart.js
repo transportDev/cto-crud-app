@@ -1,6 +1,3 @@
-// Lightweight ECharts pie/donut chart wrapper
-// Relies on global window.echarts loaded via CDN in Blade
-
 function getThemeColors() {
     const css = getComputedStyle(document.documentElement);
     const themeDark =

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
@@ -9,14 +11,42 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\DataUsulanOrder;
 use App\Models\KomenUsulanOrder;
 
+/**
+ * Controller Order Management
+ *
+ * Controller ini mengelola endpoint-endpoint untuk operasi order (Data Usulan Order):
+ * - Pembuatan order baru dengan validasi komprehensif
+ * - Prefill data form order dari berbagai sumber (dapot, summary, bwsetting, masterdata)
+ * - Detail order terbaru per site dari view data_site_order_latest
+ * - List comments untuk site tertentu
+ *
+ * @package App\Http\Controllers
+ * @author  CTO CRUD App Team
+ * @version 1.0
+ * @since   1.0.0
+ */
 class OrderController extends Controller
 {
     /**
-     * Store a new order (Data Usulan Order) record.
+     * Menyimpan record order baru (Data Usulan Order)
+     *
+     * Method ini melakukan:
+     * 1. Validasi authorization (role admin/requestor + permission 'create orders')
+     * 2. Validasi input data dengan rules lengkap
+     * 3. Menyimpan data order ke table data_usulan_order
+     * 4. Membuat comment pertama (jika ada) ke table komen_usulan_order
+     * 5. Operasi dilakukan dalam transaction untuk konsistensi data
+     *
+     * Field tanggal_input menggunakan DB default (CURRENT_DATE) sehingga
+     * tidak perlu di-set manual.
+     *
+     * POST /api/order
+     *
+     * @param Request $request Request object dengan data order dan optional comment
+     * @return JsonResponse JSON response dengan ok status dan data order yang dibuat
      */
     public function store(Request $request): JsonResponse
     {
-        // Authorization: require admin role AND specific permission
         $user = $request->user();
         if (!$user) {
             return response()->json(['ok' => false, 'message' => 'Unauthorized'], 401);
@@ -62,22 +92,20 @@ class OrderController extends Controller
             ], 422);
         }
 
-        // tanggal_input uses DB default CURRENT_DATE, do not set unless provided intentionally
         unset($data['tanggal_input']);
 
         $commentText = $data['comment'] ?? null;
         unset($data['comment']);
 
-        // Persist to mysql3 (db_cto) to keep data in the same source as readers
         $row = null;
         DB::connection('mysql3')->transaction(function () use ($data, $commentText, &$row) {
             $row = DataUsulanOrder::on('mysql3')->create($data);
             if ($commentText !== null && trim($commentText) !== '') {
                 KomenUsulanOrder::on('mysql3')->create([
                     'order_id'  => $row->no,
-                    'requestor' => $row->requestor, // or auth user name/email if preferred
+                    'requestor' => $row->requestor,
                     'comment'   => $commentText,
-                    'siteid_ne' => $row->siteid_ne ?? '', // Include siteid_ne from the order
+                    'siteid_ne' => $row->siteid_ne ?? '',
                 ]);
             }
         });
@@ -89,8 +117,15 @@ class OrderController extends Controller
     }
 
     /**
-     * Prefill data for order form (read-only, mysql3).
-     * GET /api/order-prefill?site_id=...
+     * Prefill data form order dari berbagai sumber database
+     *
+     * Method ini mengambil dan menggabungkan data dari 5 tabel berbeda di mysql3 untuk
+     * keperluan prefill form pembuatan order. Data dikombinasikan berdasarkan site_id.
+     *
+     * GET /api/order-prefill?site_id=XXX
+     *
+     * @param Request $request Request object dengan query param site_id (required)
+     * @return JsonResponse JSON response dengan ok status dan aggregated data dari 5 tabel
      */
     public function prefill(Request $request): JsonResponse
     {
@@ -98,7 +133,6 @@ class OrderController extends Controller
         if ($siteId === '') {
             return response()->json(['ok' => false, 'error' => 'site_id required'], 422);
         }
-        // Basic auth guard (still behind login). Optional permission check if needed later.
         if (!$request->user()) {
             return response()->json(['ok' => false, 'error' => 'Unauthorized'], 401);
         }
@@ -106,14 +140,12 @@ class OrderController extends Controller
         try {
             $conn = DB::connection('mysql3');
 
-            // dapot: Branch by Siteid
             $branch = null;
             $rowDapot = $conn->selectOne("SELECT Branch FROM dapot WHERE Siteid = ? LIMIT 1", [$siteId]);
             if ($rowDapot) {
                 $branch = $rowDapot->Branch ?? null;
             }
 
-            // official_mhi_weekly_summary_thi_per_site: category_avg21 and avg_pl (for pl_value categorization)
             $plStatus = null;
             $plValue = null;
             $rowSummary = $conn->selectOne(
@@ -143,7 +175,6 @@ class OrderController extends Controller
                 }
             }
 
-            // data_site_order: no_order, status_order
             $cekNim = $statusOrder = null;
             $rowOrder = $conn->selectOne("SELECT no_order, status_order FROM data_site_order WHERE site_id = ? LIMIT 1", [$siteId]);
             if ($rowOrder) {
@@ -151,11 +182,9 @@ class OrderController extends Controller
                 $statusOrder = $rowOrder->status_order ?? null;
             }
 
-            // bwsetting: BW SETTING, LINK OWNER (remarks ok) picking highest BW SETTING numerically
             $linkCapacity = $linkOwner = null;
             $rowsBw = $conn->select("SELECT `BW SETTING` AS bw, `LINK OWNER` AS owner FROM bwsetting WHERE `SITE ID NE` = ? AND `REMARKS`='ok'", [$siteId]);
             if ($rowsBw) {
-                // Choose row with max numeric BW (extract number from string)
                 $best = null;
                 $bestVal = -1;
                 foreach ($rowsBw as $r) {
@@ -176,7 +205,6 @@ class OrderController extends Controller
                 }
             }
 
-            // masterdata: Type Alpro (transport type) & Category Alpro (transport category)
             $transportType = null;
             $transportCategory = null;
             $rowMaster = $conn->selectOne(
@@ -192,15 +220,15 @@ class OrderController extends Controller
                 'ok' => true,
                 'site_id' => $siteId,
                 'data' => [
-                    'nop' => $branch, // Branch -> nop
-                    'pl_status' => $plStatus, // category_avg21
-                    'pl_value' => $plValue, // derived from avg_pl
-                    'link_capacity' => $linkCapacity, // BW SETTING
-                    'link_owner' => $linkOwner, // LINK OWNER
-                    'cek_nim_order' => $cekNim, // no_order
-                    'status_order' => $statusOrder, // status_order
-                    'transport_type' => $transportType, // Type Alpro
-                    'transport_category' => $transportCategory, // Category Alpro
+                    'nop' => $branch,
+                    'pl_status' => $plStatus,
+                    'pl_value' => $plValue,
+                    'link_capacity' => $linkCapacity,
+                    'link_owner' => $linkOwner,
+                    'cek_nim_order' => $cekNim,
+                    'status_order' => $statusOrder,
+                    'transport_type' => $transportType,
+                    'transport_category' => $transportCategory,
                 ],
             ]);
         } catch (\Throwable $e) {
@@ -209,8 +237,16 @@ class OrderController extends Controller
     }
 
     /**
-     * Fetch latest order detail information for a site from mysql2 view data_site_order_latest.
+     * Mengambil detail order terbaru untuk sebuah site dari view
+     *
+     * Method ini melakukan query ke view data_site_order_latest di mysql3
+     * untuk mendapatkan informasi order terlengkap dan terbaru per site.
+     *
      * GET /api/order/detail/{site_id}
+     *
+     * @param Request $request Request object dengan user authentication
+     * @param string $siteId Site ID yang akan diambil detail ordernya
+     * @return JsonResponse JSON response dengan ok status dan object detail order (35 fields)
      */
     public function detail(Request $request, string $siteId): JsonResponse
     {
@@ -250,8 +286,15 @@ class OrderController extends Controller
     }
 
     /**
-     * List existing comments (read-only) for a particular site.
-     * GET /api/order-comments?site_id=...
+     * Mengambil daftar comments untuk sebuah site tertentu
+     *
+     * Method ini melakukan query ke table komen_usulan_order di mysql3
+     * untuk mendapatkan semua comments/komentar yang terkait dengan sebuah site.
+     *
+     * GET /api/order-comments?site_id=XXX
+     *
+     * @param Request $request Request object dengan query param site_id (required)
+     * @return JsonResponse JSON response dengan ok status dan array of comments
      */
     public function comments(Request $request): JsonResponse
     {
@@ -263,7 +306,6 @@ class OrderController extends Controller
             return response()->json(['ok' => false, 'error' => 'Unauthorized'], 401);
         }
 
-        // Get all comments for this site directly from mysql3
         $comments = KomenUsulanOrder::on('mysql3')
             ->where('siteid_ne', $siteId)
             ->orderBy('id')
