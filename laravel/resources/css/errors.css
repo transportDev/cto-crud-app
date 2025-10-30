@@ -1,4 +1,4 @@
-/* Shared styles for error pages (403, 404, etc.) */
+
 
 body {
     margin: 0;
@@ -16,7 +16,7 @@ body {
     overflow: hidden;
 }
 
-/* Animated background gradient */
+
 .error-bg {
     position: absolute;
     inset: 0;
@@ -52,7 +52,7 @@ body {
     }
 }
 
-/* Error card with glass morphism */
+
 .error-card {
     position: relative;
     z-index: 10;
@@ -96,7 +96,7 @@ body {
     }
 }
 
-/* Typography */
+
 .error-code {
     font-size: 5rem;
     font-weight: 700;
@@ -126,7 +126,7 @@ body {
     margin-right: auto;
 }
 
-/* Action buttons */
+
 .button-group {
     display: flex;
     gap: 1rem;
@@ -160,7 +160,7 @@ body {
     transform: translateY(-2px);
 }
 
-/* Responsive adjustments */
+
 @media (max-width: 640px) {
     .error-card {
         padding: 2rem 1.5rem;

@@ -1,13 +1,36 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
+/**
+ * Controller Autentikasi
+ *
+ * Controller ini mengelola proses autentikasi user aplikasi CTO CRUD:
+ * - Menampilkan form login
+ * - Proses login dengan multiple credential attempts (email/username, case-insensitive)
+ * - Logout dengan session invalidation
+ * - Redirect otomatis berdasarkan permission user setelah login
+ *
+ * @package App\Http\Controllers
+ * @author  CTO CRUD App Team
+ * @version 1.0
+ * @since   1.0.0
+ */
 class AuthController extends Controller
 {
+    /**
+     * Menampilkan halaman form login
+     *
+     * GET /login
+     *
+     * @return \Illuminate\Http\RedirectResponse|\Illuminate\View\View
+     */
     public function showLoginForm()
     {
         if (Auth::check()) {
@@ -17,6 +40,14 @@ class AuthController extends Controller
         return view('auth.login');
     }
 
+    /**
+     * Memproses login user dengan multiple credential attempts
+     *
+     * POST /login
+     *
+     * @param Request $request Request object dengan input login dan password
+     * @return \Illuminate\Http\RedirectResponse Redirect ke halaman intended atau error ke form login
+     */
     public function login(Request $request)
     {
         $credentials = $request->validate([
@@ -45,7 +76,16 @@ class AuthController extends Controller
     }
 
     /**
-     * @return array<int, array<string, string>>
+     * Membuat array credential attempts untuk proses login
+     *
+     * Method ini menghasilkan array kombinasi kredensial yang akan dicoba untuk login.
+     * Strategi multiple attempts meningkatkan UX dengan mendukung:
+     * - Case-insensitive login (coba original case dan lowercase)
+     * - Flexible field matching (coba email dan username untuk input yang sama)
+     *
+     * @param string $login Input login dari user (email atau username)
+     * @param string $password Password user
+     * @return array<int, array<string, string>> Array of credential attempts (email/username + password)
      */
     private function credentialAttempts(string $login, string $password): array
     {
@@ -89,6 +129,14 @@ class AuthController extends Controller
         }));
     }
 
+    /**
+     * Logout user dan membersihkan session
+     *
+     * POST /logout
+     *
+     * @param Request $request Request object untuk akses session
+     * @return \Illuminate\Http\RedirectResponse Redirect ke halaman login
+     */
     public function logout(Request $request)
     {
         Auth::logout();
@@ -97,9 +145,14 @@ class AuthController extends Controller
         return redirect()->route('login');
     }
 
+    /**
+     * Menentukan URL redirect default berdasarkan permission user
+     *
+     * @param mixed $user User object yang sudah terautentikasi
+     * @return string URL redirect destination
+     */
     private function defaultRedirectFor($user): string
     {
-        // Admins (or anyone with this permission) go to Filament panel; others go to dashboard.
         if ($user && $user->can('access filament')) {
             return url('/admin');
         }

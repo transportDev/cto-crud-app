@@ -1,6 +1,3 @@
-// Capacity comments modal logic: exposes window.openCapacityCommentsModal
-// and window.closeCapacityCommentsModal for dashboard tables.
-
 (function () {
     const modal = document.getElementById("capacityCommentsModal");
     if (!modal) {

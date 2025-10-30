@@ -1,6 +1,3 @@
-// Shared Excel/CSV export utility used across dashboard pages
-// Prefer XLSX via CDN; fallback to CSV when not available
-
 async function ensureXlsx() {
     if (typeof window !== "undefined" && typeof window.XLSX !== "undefined") {
         return true;
@@ -48,9 +45,7 @@ export async function exportAoa(fileBaseName, aoa) {
             window.XLSX.utils.book_append_sheet(wb, ws, "Data");
             window.XLSX.writeFile(wb, `${fileBaseName}-${date}.xlsx`);
             return;
-        } catch {
-            // fall back to CSV
-        }
+        } catch {}
     }
     const csv = aoaToCsv(aoa);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });

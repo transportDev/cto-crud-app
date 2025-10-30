@@ -14,26 +14,26 @@
 
 <body>
     <div class="error-container">
-        <!-- Animated background -->
+
         <div class="error-bg"></div>
 
-        <!-- Error card -->
+
         <div class="error-card">
 
 
-            <!-- Error code -->
+
             <h1 class="error-code">404</h1>
 
-            <!-- Error title -->
+
             <h2 class="error-title">Halaman Tidak Ditemukan</h2>
 
-            <!-- Error description -->
+
             <p class="error-description">
                 Maaf, halaman yang Anda cari tidak ada atau telah dipindahkan.
                 Silakan periksa kembali URL atau kembali ke halaman utama.
             </p>
 
-            <!-- Action buttons -->
+
             <div class="button-group">
                 <a href="{{ url('/dashboard') }}" class="btn btn-primary">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -1,7 +1,3 @@
-// Order modal logic extracted from inline script
-// Provides: window.openOrderModal(prefill), window.closeOrderModal()
-// Depends on global loadCapacity() if present.
-
 (function () {
     const state = { submitting: false, prefillToken: null };
     const DEFAULT_NOP_OPTIONS = ["DENPASAR", "KUPANG", "MATARAM", "FLORES"];
@@ -16,7 +12,6 @@
 
     function ensureShell() {
         if (document.getElementById("orderModal")) return;
-        // If for some reason modal not rendered, we skip.
     }
 
     function qs(id) {
@@ -245,7 +240,6 @@
         const screen = qs("screenLoading");
         if (loader) loader.style.display = "none";
 
-        // Reset form to defaults on every open to avoid leaking previous values
         if (typeof form.reset === "function") {
             form.reset();
         } else {
@@ -258,7 +252,6 @@
             }
         }
 
-        // Set initial disabled state for all fields except allowed ones
         const allowedFields = [
             "nop",
             "propose_solution",
@@ -278,19 +271,17 @@
 
         populateNopSelect();
         if (prefill.nop != null) setNopValue(prefill.nop);
-        else setNopValue(""); // Ensure NOP defaults to "Pilih NOP"
+        else setNopValue("");
         populateProposeSolutionSelect();
         if (prefill.propose_solution != null)
             setProposeSolutionValue(prefill.propose_solution);
-        else setProposeSolutionValue(""); // Ensure Propose Solution defaults to placeholder
+        else setProposeSolutionValue("");
         setCekNimOrderValue(prefill.cek_nim_order);
         setStatusOrderValue(prefill.status_order);
 
-        // Always set siteid_ne first if provided
         if (prefill.siteid_ne && form.elements["siteid_ne"]) {
             form.elements["siteid_ne"].value = prefill.siteid_ne;
         }
-        // Insert quick local metrics (link_util fraction -> percent, jarak_odp)
         if (prefill.link_util != null && form.elements["link_util"]) {
             const v = Number(prefill.link_util);
             if (!Number.isNaN(v)) {
@@ -306,11 +297,9 @@
 
         modal.classList.add("active");
 
-        // Fetch backend data if site id present
         if (prefill.site_id) {
             if (screen) screen.classList.add("active");
 
-            // Load existing comments list (read-only)
             const commentsPromise = (async () => {
                 try {
                     const c = await fetch(
@@ -356,7 +345,6 @@
                 }
             })();
 
-            // Prefill backend data
             const token = Date.now() + Math.random();
             state.prefillToken = token;
             if (loader) loader.style.display = "flex";
@@ -371,7 +359,6 @@
             ];
             for (const el of form.elements) {
                 if (isFormControl(el)) {
-                    // Only track elements that were enabled AND are in the allowed fields list
                     if (!el.disabled && allowedFields.includes(el.name)) {
                         enabledEls.push(el);
                         el.disabled = true;
@@ -395,11 +382,9 @@
                         Object.entries(j.data).forEach(([k, v]) => {
                             if (v == null) return;
                             if (k === "nop") {
-                                // Skip NOP - always show "Pilih NOP" by default
                                 return;
                             }
                             if (k === "propose_solution") {
-                                // Skip Propose Solution - always show placeholder by default
                                 return;
                             }
                             if (k === "cek_nim_order") {
@@ -442,7 +427,6 @@
         const loader = qs("orderPrefillStatus");
         const screen = qs("screenLoading");
         if (modal) modal.classList.remove("active");
-        // Clear and set proper disabled state on close
         if (form) {
             if (typeof form.reset === "function") form.reset();
             const allowedFields = [
@@ -459,9 +443,9 @@
             }
         }
         populateNopSelect();
-        setNopValue(""); // Reset to "Pilih NOP"
+        setNopValue("");
         populateProposeSolutionSelect();
-        setProposeSolutionValue(""); // Reset to placeholder
+        setProposeSolutionValue("");
         setCekNimOrderValue();
         setStatusOrderValue();
         if (loader) loader.style.display = "none";

@@ -1,6 +1,3 @@
-// Lightweight ECharts line chart wrapper for reusable, data-agnostic charts
-// Relies on global window.echarts loaded via CDN in Blade
-
 function getThemeColors() {
     const css = getComputedStyle(document.documentElement);
     const themeDark =
@@ -96,7 +93,6 @@ export class LineChart {
                             "0"
                         )}:${String(minutes).padStart(2, "0")}`;
 
-                        // Show full date + time at midnight to anchor the day
                         if (hours === 0 && minutes === 0) {
                             const day = String(date.getUTCDate()).padStart(
                                 2,
@@ -106,7 +102,6 @@ export class LineChart {
                             return `${day} ${month}\n${hourLabel}`;
                         }
 
-                        // Show intermediate tick every 6 hours to reduce clutter
                         if (minutes === 0 && hours % 6 === 0) {
                             return hourLabel;
                         }
@@ -186,7 +181,6 @@ export class LineChart {
             ],
         };
 
-        // Merge options, but preserve default series shape (type, styles, etc.)
         let finalOptions = deepMerge(defaultOptions, customOptions);
         if (customOptions && Array.isArray(customOptions.series)) {
             const mergedSeries = (defaultOptions.series || []).map((s, i) => ({

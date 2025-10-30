@@ -1,6 +1,6 @@
 <div class="space-y-4">
     @if(isset($tablePreview['error']) && $tablePreview['error'])
-        {{-- Empty state --}}
+        
         <div class="flex flex-col items-center justify-center py-12 text-center bg-gray-50/50 dark:bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-200 dark:border-gray-600">
             <div class="rounded-full bg-gray-100 dark:bg-gray-700 p-3 mb-4">
                 <x-heroicon-o-table-cells class="h-8 w-8 text-gray-400 dark:text-gray-500" />
@@ -13,7 +13,7 @@
             </p>
         </div>
     @elseif($loading ?? false)
-        {{-- Loading state --}}
+        
 		<div class="flex flex-col items-center justify-center py-12 text-center bg-gray-50/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-600">
 			<style>
 				.tb-loader{width:45px;aspect-ratio:.75;--c:no-repeat linear-gradient(currentColor 0 0);background:var(--c) 0% 100%,var(--c) 50% 100%,var(--c) 100% 100%;background-size:20% 65%;animation:tb-l8 1s infinite linear}
@@ -25,7 +25,7 @@
 			</p>
 		</div>
     @elseif(isset($tablePreview['headers']) && isset($tablePreview['rows']))
-        {{-- Table preview --}}
+        
         <div class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
             <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <div class="flex items-center justify-between">
@@ -86,7 +86,7 @@
                 </table>
             </div>
             
-            {{-- Table footer with sample data notice --}}
+            
             <div class="px-4 py-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center space-x-1">
                     <x-heroicon-o-information-circle class="h-3 w-3" />
@@ -95,7 +95,7 @@
             </div>
         </div>
     @else
-        {{-- Default state when no preview is available --}}
+        
         <div class="flex flex-col items-center justify-center py-8 text-center bg-gray-50/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-600">
             <div class="rounded-full bg-gray-100 dark:bg-gray-700 p-3 mb-3">
                 <x-heroicon-o-eye class="h-6 w-6 text-gray-400 dark:text-gray-500" />

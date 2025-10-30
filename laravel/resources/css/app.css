@@ -1,4 +1,3 @@
-/* Include dashboard shared styles */
 @import "./dashboard.css";
 
 @tailwind base;
@@ -20,7 +19,6 @@
         background-color: var(--carbon-black);
         color: #fff;
     }
-    /* Ensure strong contrast for accessibility */
     .text-gray-300 {
         color: #d1d5db;
     }
@@ -34,9 +32,9 @@
 
 @layer components {
     .glass-card {
-        /* base card color using CSS variable as requested */
+        
         background-color: var(--carbon-black) !important;
-        /* glass overlay + subtle tint */
+        
         background-image: linear-gradient(
                 to bottom,
                 rgba(255, 255, 255, 0.04),
@@ -57,7 +55,7 @@
         border-radius: 1rem;
     }
 
-    /* Glassy input shell with left icon + divider (as in reference image) */
+    
     .input-shell {
         display: flex;
         align-items: center;
@@ -76,7 +74,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #9aa1aa; /* muted icon */
+        color: #9aa1aa; 
         border-right: 1px solid rgba(255, 255, 255, 0.08);
     }
     .input-shell .field-input {
@@ -112,11 +110,11 @@
         background: rgba(20, 20, 22, 0.7);
     }
     .input-shell.has-error {
-        border-color: #dc2626; /* red-600 */
+        border-color: #dc2626; 
     }
     .input-shell.has-error .leading-icon {
         border-right-color: rgba(220, 38, 38, 0.45);
-        color: #d97706; /* slight warning tint */
+        color: #d97706; 
     }
     .login-card {
         animation: floaty 6s ease-in-out infinite;
@@ -136,7 +134,7 @@
             );
         filter: blur(10px);
     }
-    /* Remove any default borders inside Filament auth card */
+    
     .login-card .fi-input,
     .login-card .fi-section,
     .login-card .fi-fo-field-wrp,
@@ -153,7 +151,7 @@
         outline: 2px solid var(--primary-red);
         outline-offset: 2px;
     }
-    /* Harmonize Filament input height and rounded corners for cleaner layout */
+    
     .login-card .fi-input,
     .login-card input[type="email"],
     .login-card input[type="password"] {
