@@ -288,11 +288,16 @@ class DashboardController extends Controller
                     LEFT JOIN (
                         SELECT 
                             site_id,
-                            AVG(avg_pl) AS packet_loss
+                            AVG(avg_pl) AS packet_loss,
                         FROM (
                             SELECT site_id, reg_name, `week`, avg_pl
                             FROM db_cto.official_mhi_weekly_summary_thi_per_site
                             WHERE reg_name = ?
+                              AND `week` >= (
+                                SELECT MAX(`week`) - 5
+                                FROM db_cto.official_mhi_weekly_summary_thi_per_site
+                                WHERE reg_name = ?
+                              )
                         ) w
                         WHERE site_id IN ({$placeholders})
                         GROUP BY site_id
@@ -310,7 +315,7 @@ class DashboardController extends Controller
                     GROUP BY s.site_id, pl.packet_loss, j.jarak, d.no_order, 
                              d.status_order, d.progress, d.tgl_on_air, 
                              m.`Category Alpro`, m.`Type Alpro`
-                ", array_merge($siteIds, [$region], $siteIds));
+                ", array_merge($siteIds, [$region, $region], $siteIds));
 
                     $map = [];
                     foreach ($combinedRows as $cr) {
