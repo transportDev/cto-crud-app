@@ -288,7 +288,7 @@ class DashboardController extends Controller
                     LEFT JOIN (
                         SELECT 
                             site_id,
-                            AVG(avg_pl) AS packet_loss,
+                            AVG(avg_pl) AS packet_loss
                         FROM (
                             SELECT site_id, reg_name, `week`, avg_pl
                             FROM db_cto.official_mhi_weekly_summary_thi_per_site
