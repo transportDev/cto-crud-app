@@ -15,12 +15,12 @@ class FilamentAuthServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // Register missing Filament auth routes
+
         Route::middleware(['web'])
             ->prefix('admin')
             ->name('filament.admin.')
             ->group(function () {
-                // Add the missing POST login route
+
                 Route::post('/login', function () {
                     return Filament::getCurrentPanel()
                         ->getLoginPage()

@@ -32,7 +32,7 @@ class AdminPanelProvider extends PanelProvider
             ->brandLogo(fn() => view('filament.pages.partials.brand-logo'))
             ->authGuard('web')
             ->colors([
-                // Telkomsel-inspired bold red
+
                 'primary' => Color::hex('#E60000'),
             ])
             ->darkMode(true, true)
@@ -57,7 +57,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-                // Only allow administrators into the Filament panel
+
                 'role:admin',
             ]);
     }
