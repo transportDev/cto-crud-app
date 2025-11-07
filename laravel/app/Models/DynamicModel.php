@@ -21,10 +21,10 @@ class DynamicModel extends Model
     {
         $this->setTable($table);
 
-        // Get comprehensive table information
+
         $tableInfo = $this->getTableInfo($table);
 
-        // IMPORTANT: Set these properties BEFORE any operations
+
         $this->primaryKey = $tableInfo['primary_key'];
         $this->incrementing = $tableInfo['incrementing'];
         $this->keyType = $tableInfo['key_type'];
@@ -33,14 +33,12 @@ class DynamicModel extends Model
         return $this;
     }
 
-    /**
-     * Override newInstance to preserve runtime configuration
-     */
+
     public function newInstance($attributes = [], $exists = false)
     {
         $model = parent::newInstance($attributes, $exists);
 
-        // Preserve the runtime configuration
+
         if ($this->table) {
             $model->setTable($this->table);
             $model->primaryKey = $this->primaryKey;
@@ -52,14 +50,12 @@ class DynamicModel extends Model
         return $model;
     }
 
-    /**
-     * Override newFromBuilder to ensure primary key is set correctly
-     */
+
     public function newFromBuilder($attributes = [], $connection = null)
     {
         $model = parent::newFromBuilder($attributes, $connection);
 
-        // Ensure the table configuration is applied
+
         if ($this->table && !$model->primaryKey) {
             $tableInfo = $this->getTableInfo($this->table);
             $model->primaryKey = $tableInfo['primary_key'];
@@ -71,9 +67,7 @@ class DynamicModel extends Model
         return $model;
     }
 
-    /**
-     * Get comprehensive table information with caching
-     */
+
     protected function getTableInfo(string $table): array
     {
         $cacheKey = 'table_info_' . config('database.default') . '_' . $table;
@@ -90,9 +84,7 @@ class DynamicModel extends Model
         });
     }
 
-    /**
-     * Detect primary key from database information schema
-     */
+
     protected function detectPrimaryKeyFromDatabase(string $table): string
     {
         $connection = config('database.default');
@@ -121,17 +113,17 @@ class DynamicModel extends Model
             Log::warning("Failed to detect primary key for table {$table}: " . $e->getMessage());
         }
 
-        // Fallback to convention-based detection
+
         return $this->detectPrimaryKeyByConvention($table);
     }
 
     protected function detectPrimaryKeyByConvention(string $table): string
     {
-        // Check common patterns
+
         $patterns = [
             'id',
-            $table . '_id',                        // masterdata_id for masterdata table
-            Str::singular($table) . '_id',        // singular form
+            $table . '_id',
+            Str::singular($table) . '_id',
             Str::snake(Str::singular($table)) . '_id',
             'record_id',
         ];
@@ -142,7 +134,7 @@ class DynamicModel extends Model
             }
         }
 
-        // Ultimate fallback: first column
+
         $columns = Schema::getColumnListing($table);
         return $columns[0] ?? 'id';
     }
@@ -171,7 +163,7 @@ class DynamicModel extends Model
             Log::warning("Failed to detect if primary key is incrementing for {$table}: " . $e->getMessage());
         }
 
-        // Default assumption
+
         return !in_array($this->detectKeyType($table, $primaryKey), ['string', 'uuid']);
     }
 

@@ -13,17 +13,36 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 
+/**
+ * Service untuk membuat tabel database baru secara dinamis.
+ *
+ * Menyediakan fungsionalitas untuk:
+ * - Validasi nama tabel dan definisi kolom
+ * - Preview blueprint migrasi sebelum eksekusi
+ * - Pembuatan tabel dengan constraint dan index
+ * - Pembersihan cache metadata setelah perubahan skema
+ * - Penyimpanan metadata tabel ke model DynamicTable
+ *
+ * @package App\Services
+ * @author CTO CRUD System
+ */
 class TableBuilderService
 {
     /**
-     * Build a normalized definition array and log a preview.
-     * IMPORTANT: Does NOT execute schema changes yet.
+     * Membuat preview blueprint migrasi tanpa mengeksekusi perubahan skema.
+     *
+     * Melakukan normalisasi dan validasi definisi tabel, kemudian membuat
+     * representasi string dari kode migrasi Laravel yang akan dihasilkan.
+     * Berguna untuk review sebelum pembuatan tabel aktual.
+     *
+     * @param array $definition Definisi tabel dengan keys: table_name, columns
+     * @return array Array dengan keys: table_name, preview_lines, normalized
+     * @throws ValidationException Jika validasi nama tabel atau kolom gagal
      */
     public function preview(array $input): array
     {
         $definition = $this->normalizeDefinition($input);
 
-        // Build a human-readable migration-like preview
         $lines = [];
         $lines[] = "Schema::create('{$definition['table']}', function (Blueprint $" . "table) {";
 
@@ -55,34 +74,32 @@ class TableBuilderService
     }
 
     /**
-     * TODO: Implement transactional table creation safely using Schema::create().
-     * - Validate names, avoid reserved words, prevent collisions.
-     * - Use Doctrine DBAL for advanced introspection as needed.
-     * - Wrap in a transaction and rollback on error.
+     * Membuat tabel baru di database dengan validasi lengkap.
+     *
+     * Melakukan validasi komprehensif terhadap definisi tabel, membuat tabel
+     * menggunakan Schema Builder Laravel, membersihkan cache metadata, dan
+     * menyimpan informasi tabel ke model DynamicTable untuk tracking.
+     *
+     * @param array $definition Definisi tabel dengan keys: table, columns, timestamps, soft_deletes
+     * @return void
+     * @throws ValidationException Jika validasi gagal
+     * @throws \Exception Jika terjadi error saat pembuatan tabel
      */
     public function create(array $definition): void
     {
         $definition = $this->normalizeDefinition($definition);
 
-        // Validate table name uniqueness and reserved words
         $this->validateTableName($definition['table']);
 
-        // Validate columns
         $this->validateColumns($definition['columns']);
 
-        // Guard against collisions
         if (Schema::hasTable($definition['table'])) {
             throw ValidationException::withMessages([
                 'table' => 'A table with this name already exists.',
             ]);
         }
 
-        // Schema::create is already transactional. Wrapping it in another DB::transaction
-        // can cause "no active transaction" errors on some database drivers when the
-        // implicit commit happens.
         Schema::create($definition['table'], function (Blueprint $table) use ($definition) {
-            // Ensure a primary key if one is set within the columns definition
-            // If none provided and no explicit PK, do nothing (allow fully custom)
             foreach ($definition['columns'] as $col) {
                 $this->applyColumn($table, $col);
             }
@@ -96,24 +113,18 @@ class TableBuilderService
             }
         });
 
-        // Bust schema cache for the new table so UI reflects columns immediately
         try {
             app(DynamicSchemaService::class)->invalidateTableCache($definition['table']);
         } catch (\Throwable $e) {
-            // ignore
         }
 
-        // Also refresh the whitelist so the new table appears in pickers immediately
         Cache::forget('cto:tables:whitelist');
 
-        // Auto-populate meta (PK/label) for this table
         try {
             app(DynamicSchemaService::class)->populateMetaForTable($definition['table']);
         } catch (\Throwable $e) {
-            // No-op: avoid breaking creation if meta table/migrations not ready
         }
 
-        // Persist metadata if metadata table exists (after successful table creation)
         if (Schema::hasTable('dynamic_tables')) {
             DB::table('dynamic_tables')->insert([
                 'table' => $definition['table'],
@@ -123,7 +134,6 @@ class TableBuilderService
             ]);
         }
 
-        // Audit log (after successful table creation)
         if (Schema::hasTable('admin_audit_logs')) {
             DB::table('admin_audit_logs')->insert([
                 'user_id' => Auth::id(),
@@ -140,11 +150,26 @@ class TableBuilderService
         }
     }
 
+    /**
+     * Memvalidasi format nama tabel atau kolom.
+     *
+     * Nama harus dimulai dengan huruf kecil, diikuti oleh huruf kecil,
+     * angka, atau underscore.
+     *
+     * @param string $name Nama yang akan divalidasi
+     * @return bool True jika nama valid
+     */
     public static function isValidName(string $name): bool
     {
         return (bool) preg_match('/^[a-z][a-z0-9_]*$/', $name);
     }
 
+    /**
+     * Memeriksa apakah nama adalah reserved keyword SQL.
+     *
+     * @param string $name Nama yang akan diperiksa
+     * @return bool True jika nama adalah reserved keyword
+     */
     public static function isReserved(string $name): bool
     {
         $reserved = [
@@ -177,7 +202,14 @@ class TableBuilderService
     }
 
     /**
-     * Normalize user input into a consistent table definition array.
+     * Menormalisasi input user menjadi array definisi tabel yang konsisten.
+     *
+     * Mengonversi input form mentah menjadi struktur data standar dengan
+     * semua field yang diperlukan, termasuk handling tipe data khusus
+     * seperti enum/set dan foreign key constraints.
+     *
+     * @param array $input Input mentah dari user
+     * @return array Array definisi yang dinormalisasi dengan keys: table, columns, timestamps, soft_deletes
      */
     protected function normalizeDefinition(array $input): array
     {
@@ -216,6 +248,16 @@ class TableBuilderService
         ];
     }
 
+    /**
+     * Memvalidasi nama tabel untuk memastikan format valid dan bukan reserved.
+     *
+     * Memeriksa format nama sesuai regex, menolak reserved keywords SQL,
+     * dan memblokir nama tabel sistem penting.
+     *
+     * @param string $name Nama tabel yang akan divalidasi
+     * @return void
+     * @throws ValidationException Jika nama tidak valid atau reserved
+     */
     protected function validateTableName(string $name): void
     {
         Validator::validate(
@@ -229,7 +271,6 @@ class TableBuilderService
             ]);
         }
 
-        // Block critical system tables by pattern
         $blocked = ['migrations', 'password_resets', 'personal_access_tokens', 'failed_jobs', 'admin_audit_logs', 'dynamic_tables'];
         if (in_array($name, $blocked, true)) {
             throw ValidationException::withMessages([
@@ -238,9 +279,17 @@ class TableBuilderService
         }
     }
 
+    /**
+     * Memvalidasi array definisi kolom.
+     *
+     * Memeriksa nama kolom unik, format nama valid, dan bukan reserved keyword.
+     *
+     * @param array $columns Array definisi kolom
+     * @return void
+     * @throws ValidationException Jika ada duplikasi nama atau nama tidak valid
+     */
     protected function validateColumns(array $columns): void
     {
-        // Ensure unique names
         $names = array_map(fn($c) => $c['name'] ?? '', $columns);
         if (count($names) !== count(array_unique($names))) {
             throw ValidationException::withMessages([
@@ -255,7 +304,6 @@ class TableBuilderService
                 ]);
             }
 
-            // Validate enum/set options when applicable
             if (in_array($col['type'], ['enum', 'set'], true)) {
                 if (empty($col['enum_options']) || !is_array($col['enum_options'])) {
                     throw ValidationException::withMessages([
@@ -264,7 +312,6 @@ class TableBuilderService
                 }
             }
 
-            // Foreign key requires reference table
             if ($col['type'] === 'foreignId') {
                 if (empty($col['references_table'])) {
                     throw ValidationException::withMessages([
@@ -275,12 +322,22 @@ class TableBuilderService
         }
     }
 
+    /**
+     * Menerapkan definisi kolom ke Blueprint tabel.
+     *
+     * Membuat kolom database berdasarkan tipe, menerapkan modifier
+     * (nullable, default, comment), membuat index, dan menambahkan
+     * constraint foreign key jika diperlukan.
+     *
+     * @param Blueprint $table Instance Blueprint untuk tabel
+     * @param array $col Definisi kolom dengan keys: name, type, length, dll
+     * @return void
+     */
     protected function applyColumn(Blueprint $table, array $col): void
     {
         $type = $col['type'];
         $name = $col['name'];
 
-        // Build column based on type
         $column = match ($type) {
             'string' => $table->string($name, $col['length'] ?: 255),
             'char' => $table->char($name, $col['length'] ?: 255),
@@ -317,31 +374,24 @@ class TableBuilderService
             default => $table->string($name),
         };
 
-        // Common modifiers
         if (!empty($col['nullable'])) {
             $column->nullable();
         }
 
-        // Default handling by type
         if (array_key_exists('default', $col) && $col['default'] !== null && $col['default'] !== '') {
             $defaultValue = $col['default'];
 
-            // Special handling for timestamp/datetime columns with CURRENT_TIMESTAMP or NOW()
             $currentTimestampFunctions = ['CURRENT_TIMESTAMP', 'NOW()'];
             if (in_array($type, ['timestamp', 'datetime']) && in_array(strtoupper($defaultValue), array_map('strtoupper', $currentTimestampFunctions))) {
                 $column->useCurrent();
-            }
-            // For date columns with CURDATE or CURRENT_DATE, use DB::raw()
-            elseif ($type === 'date') {
+            } elseif ($type === 'date') {
                 $dateFunctions = ['CURDATE()', 'CURRENT_DATE'];
                 if (in_array(strtoupper($defaultValue), array_map('strtoupper', $dateFunctions))) {
                     $column->default(DB::raw($defaultValue));
                 } else {
                     $column->default($defaultValue);
                 }
-            }
-            // For other SQL functions, use DB::raw()
-            else {
+            } else {
                 $sqlFunctions = [
                     'CURRENT_TIME',
                     'UUID()',
@@ -352,7 +402,6 @@ class TableBuilderService
                 if (in_array(strtoupper($defaultValue), array_map('strtoupper', $sqlFunctions))) {
                     $column->default(DB::raw($defaultValue));
                 } else {
-                    // Regular string/numeric defaults
                     $column->default($defaultValue);
                 }
             }
@@ -364,23 +413,19 @@ class TableBuilderService
             $column->comment($col['comment']);
         }
 
-        // Indexes
         if (!empty($col['unique'])) {
             $table->unique($name);
         } elseif (!empty($col['index']) && $col['index'] === 'index') {
             $table->index($name);
         } elseif (!empty($col['index']) && $col['index'] === 'fulltext') {
-            // Fulltext is supported in MySQL/MariaDB
             $table->fullText($name);
         }
 
-        // Primary: avoid duplicate primary keys when the column type already implies primary
         $impliesPrimary = ($type === 'bigInteger' && !empty($col['auto_increment']));
         if (!empty($col['primary']) && !$impliesPrimary) {
             $table->primary($name);
         }
 
-        // Foreign key constraints
         if ($type === 'foreignId' && !empty($col['references_table'])) {
             $foreign = $table->foreign($name)->references($col['references_column'] ?? 'id')->on($col['references_table']);
             if (($col['on_update'] ?? null) === 'cascade') {
@@ -402,7 +447,13 @@ class TableBuilderService
     }
 
     /**
-     * Return a single Blueprint line (string) for preview purposes.
+     * Membangun representasi string satu baris Blueprint untuk preview.
+     *
+     * Menghasilkan string kode PHP yang menunjukkan bagaimana kolom akan
+     * dibuat dalam migrasi Laravel, termasuk modifier dan constraint.
+     *
+     * @param array $col Definisi kolom
+     * @return string String kode PHP untuk preview
      */
     protected function buildBlueprintLine(array $col): string
     {
@@ -461,9 +512,7 @@ class TableBuilderService
             $currentTimestampFunctions = ['CURRENT_TIMESTAMP', 'NOW()'];
             if (in_array($type, ['timestamp', 'datetime']) && in_array(strtoupper($defaultValue), array_map('strtoupper', $currentTimestampFunctions))) {
                 $chain[] = 'useCurrent()';
-            }
-            // For date columns with CURDATE or CURRENT_DATE, use DB::raw()
-            elseif ($type === 'date') {
+            } elseif ($type === 'date') {
                 $dateFunctions = ['CURDATE()', 'CURRENT_DATE'];
                 if (in_array(strtoupper($defaultValue), array_map('strtoupper', $dateFunctions))) {
                     $chain[] = "default(DB::raw('{$defaultValue}'))";
@@ -471,9 +520,7 @@ class TableBuilderService
                     $val = is_numeric($defaultValue) ? $defaultValue : "'" . str_replace("'", "\\'", (string)$defaultValue) . "'";
                     $chain[] = "default({$val})";
                 }
-            }
-            // For other SQL functions, use DB::raw()
-            else {
+            } else {
                 $sqlFunctions = [
                     'CURRENT_TIME',
                     'UUID()',
@@ -484,7 +531,6 @@ class TableBuilderService
                 if (in_array(strtoupper($defaultValue), array_map('strtoupper', $sqlFunctions))) {
                     $chain[] = "default(DB::raw('{$defaultValue}'))";
                 } else {
-                    // Regular string/numeric defaults
                     $val = is_numeric($defaultValue) ? $defaultValue : "'" . str_replace("'", "\\'", (string)$defaultValue) . "'";
                     $chain[] = "default({$val})";
                 }
@@ -537,7 +583,6 @@ class TableBuilderService
             $line .= '->' . implode('->', $chain);
         }
 
-        // Table-level index/fulltext (preview string only if provided)
         if (!empty($col['index']) && $col['index'] === 'index') {
             $line .= "; // also: \$table->index('{$name}')";
         } elseif (!empty($col['index']) && $col['index'] === 'fulltext') {
@@ -548,7 +593,12 @@ class TableBuilderService
     }
 
     /**
-     * Return list of table names using Laravel's native Schema facade, excluding system tables.
+     * Mengembalikan daftar nama tabel user tanpa tabel sistem.
+     *
+     * Mengambil semua tabel dari database menggunakan Schema facade,
+     * kemudian memfilter tabel-tabel sistem internal.
+     *
+     * @return array Array nama tabel user
      */
     public function listUserTables(): array
     {

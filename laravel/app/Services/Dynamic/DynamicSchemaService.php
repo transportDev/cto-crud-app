@@ -10,33 +10,54 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
- * DynamicSchemaService
+ * Service untuk mengelola akses metadata skema database secara aman dan ter-cache.
  *
- * Centralizes safe, cached access to schema metadata and constraints.
- * - Whitelists tables using TableBuilderService::listUserTables()
- * - Caches column metadata, foreign keys, primary key, indexes
- * - Provides helpers for PK/auto-increment detection, soft delete detection
+ * Service ini menyediakan fungsionalitas untuk:
+ * - Whitelisting tabel menggunakan TableBuilderService::listUserTables()
+ * - Caching metadata kolom, foreign key, primary key, dan index
+ * - Helper untuk deteksi PK/auto-increment dan soft delete
+ * - Guess label column untuk dropdown FK dengan prioritas yang jelas
+ * - Compose human-readable label dari row data
+ * - Validasi keberadaan index pada kolom
+ * - Invalidasi cache metadata tabel
+ * - Populasi metadata tabel secara otomatis
  *
  * Extension points:
- * - Override cache TTL via config('cto.schema_cache_ttl', 300)
- * - Swap whitelist source if needed by replacing TableBuilderService binding
+ * - Override cache TTL melalui config('cto.schema_cache_ttl', 300)
+ * - Ganti sumber whitelist dengan mengganti binding TableBuilderService
+ *
+ * @package App\Services\Dynamic
  */
 class DynamicSchemaService
 {
     protected TableBuilderService $tableBuilder;
 
+    /**
+     * Membuat instance service dengan dependency injection.
+     *
+     * @param TableBuilderService $tableBuilder Service untuk menangani operasi table builder
+     */
     public function __construct(TableBuilderService $tableBuilder)
     {
         $this->tableBuilder = $tableBuilder;
     }
 
+    /**
+     * Mendapatkan durasi cache TTL dari konfigurasi.
+     *
+     * @return int Durasi cache dalam detik (default: 300)
+     */
     public function cacheTtl(): int
     {
         return (int) config('cto.schema_cache_ttl', 300);
     }
 
     /**
-     * Return a whitelist of safe, user-manageable tables.
+     * Mengembalikan whitelist tabel yang aman dan dapat dikelola user.
+     *
+     * Whitelist di-cache untuk menghindari query database berulang.
+     *
+     * @return array<int, string> Array nama tabel yang di-whitelist
      */
     public function whitelist(): array
     {
@@ -45,7 +66,18 @@ class DynamicSchemaService
         });
     }
 
-    /** Ensure the table is whitelisted; returns sanitized name or null. */
+    /**
+     * Memastikan tabel ada dalam whitelist dan mengembalikan nama yang sudah disanitasi.
+     *
+     * Method ini akan:
+     * - Mengubah nama tabel ke lowercase snake_case
+     * - Memvalidasi terhadap whitelist
+     * - Mengembalikan null jika tidak valid
+     *
+     * @param string|null $table Nama tabel yang akan divalidasi
+     * 
+     * @return string|null Nama tabel yang sudah disanitasi, atau null jika tidak valid
+     */
     public function sanitizeTable(?string $table): ?string
     {
         if (!$table) return null;
@@ -53,7 +85,19 @@ class DynamicSchemaService
         return in_array($table, $this->whitelist(), true) ? $table : null;
     }
 
-    /** Columns metadata as [name => [type, nullable, length, default, options]]. */
+    /**
+     * Mendapatkan metadata kolom tabel dalam format terstruktur.
+     *
+     * Mengembalikan array dengan struktur:
+     * [nama_kolom => [type, nullable, length, default, options]]
+     *
+     * Data di-cache untuk performa optimal.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return array<string, array{type: string, nullable: bool, length: int|null, default: mixed, options: array}> 
+     *         Metadata kolom
+     */
     public function columns(string $table): array
     {
         $table = $this->sanitizeTable($table);
@@ -77,7 +121,17 @@ class DynamicSchemaService
     }
 
     /**
-     * Foreign key map: [fk_col => ['referenced_table' => ..., 'referenced_column' => ...]]
+     * Mendapatkan mapping foreign key dari tabel.
+     *
+     * Mengembalikan struktur:
+     * [kolom_fk => ['referenced_table' => ..., 'referenced_column' => ...]]
+     *
+     * Hanya mendukung MySQL/MariaDB. Data di-cache untuk performa.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return array<string, array{referenced_table: string|null, referenced_column: string}> 
+     *         Map foreign key
      */
     public function foreignKeys(string $table): array
     {
@@ -107,7 +161,22 @@ class DynamicSchemaService
         });
     }
 
-    /** Primary key column name from metadata; safe fallback to heuristic. */
+    /**
+     * Mendapatkan nama kolom primary key dari metadata tabel.
+     *
+     * Method ini akan:
+     * - Query INFORMATION_SCHEMA untuk PRIMARY KEY constraint
+     * - Fallback ke heuristik jika tidak ditemukan:
+     *   1. Cek kolom 'id'
+     *   2. Cek kolom '{tabel_singular}_id'
+     *   3. Gunakan kolom pertama sebagai last resort
+     *
+     * Data di-cache untuk performa optimal.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return string Nama kolom primary key (default: 'id')
+     */
     public function primaryKey(string $table): string
     {
         $table = $this->sanitizeTable($table);
@@ -135,7 +204,6 @@ class DynamicSchemaService
                 }
             }
 
-            // Heuristics
             if (Schema::hasColumn($table, 'id')) {
                 return 'id';
             }
@@ -148,6 +216,19 @@ class DynamicSchemaService
         });
     }
 
+    /**
+     * Memeriksa apakah primary key tabel adalah auto-increment.
+     *
+     * Method ini akan:
+     * - Query INFORMATION_SCHEMA untuk flag auto_increment (MySQL/MariaDB)
+     * - Fallback ke heuristik: kolom 'id' dengan tipe integer
+     *
+     * Data di-cache untuk performa optimal.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return bool True jika primary key auto-increment
+     */
     public function isPrimaryAutoIncrement(string $table): bool
     {
         $table = $this->sanitizeTable($table);
@@ -172,6 +253,13 @@ class DynamicSchemaService
         });
     }
 
+    /**
+     * Memeriksa apakah tabel memiliki kolom deleted_at untuk soft delete.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return bool True jika tabel memiliki kolom deleted_at
+     */
     public function hasDeletedAt(string $table): bool
     {
         $table = $this->sanitizeTable($table);
@@ -179,7 +267,20 @@ class DynamicSchemaService
     }
 
     /**
-     * Guess label column for FK dropdowns (cached).
+     * Menebak kolom label terbaik untuk dropdown FK dengan prioritas berlapis.
+     *
+     * Prioritas pencarian:
+     * 0. Override admin/user dari cto_table_meta.label_column
+     * 1. Kolom dari cto_table_meta.display_template.columns
+     * 2. Kolom umum yang human-readable: name, title, label, email, code, etc.
+     * 3. Kolom pertama bertipe text-like (varchar, text, dll)
+     * 4. Primary key sebagai last resort
+     *
+     * Data di-cache untuk performa optimal.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return string Nama kolom label terbaik (default: 'id')
      */
     public function guessLabelColumn(string $table): string
     {
@@ -187,16 +288,13 @@ class DynamicSchemaService
         if (!$table) return 'id';
         $key = 'cto:schema:label_col:' . DB::getDatabaseName() . ':' . $table;
         return Cache::remember($key, $this->cacheTtl(), function () use ($table) {
-            // 0) Admin/user override from metadata
             try {
                 $meta = CtoTableMeta::query()->where('table_name', $table)->first();
                 if ($meta && $meta->label_column && Schema::hasColumn($table, $meta->label_column)) {
                     return $meta->label_column;
                 }
             } catch (\Throwable $e) {
-                // Safe no-op if table doesn't exist yet or on early bootstrap
             }
-            // 1) Prefer display_template columns if defined, fall back to label_column
             try {
                 $meta2 = CtoTableMeta::query()->where('table_name', $table)->first();
                 if ($meta2 && is_array($meta2->display_template) && !empty($meta2->display_template['columns'])) {
@@ -208,9 +306,7 @@ class DynamicSchemaService
                     return $meta2->label_column;
                 }
             } catch (\Throwable $e) {
-                // ignore
             }
-            // 2) Prefer common human-readable columns
             $preferred = [
                 'name',
                 'title',
@@ -230,7 +326,6 @@ class DynamicSchemaService
                 if (Schema::hasColumn($table, $col)) return $col;
             }
 
-            // 3) Otherwise, pick the first text-like column
             $colsMeta = $this->columns($table);
             foreach ($colsMeta as $name => $meta) {
                 $type = strtolower((string)($meta['type'] ?? ''));
@@ -239,7 +334,6 @@ class DynamicSchemaService
                 }
             }
 
-            // 4) Fallback to primary key if nothing else fits, but only 'id' if it exists
             $pk = $this->primaryKey($table);
             if ($pk && Schema::hasColumn($table, $pk)) return $pk;
             return Schema::hasColumn($table, 'id') ? 'id' : (Schema::getColumnListing($table)[0] ?? 'id');
@@ -247,47 +341,58 @@ class DynamicSchemaService
     }
 
     /**
-     * Prefer an indexed text-like column for search to improve performance.
+     * Memilih kolom text-like yang ter-index untuk search dan meningkatkan performa.
+     *
+     * Prioritas:
+     * 1. Override admin/user dari cto_table_meta.search_column
+     * 2. Label column jika ter-index
+     * 3. Kolom umum yang ter-index (name, title, email, dll)
+     * 4. Label column (meskipun tidak ter-index)
+     * 5. Primary key sebagai last resort
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return string Nama kolom search terbaik (default: 'id')
      */
     public function bestSearchColumn(string $table): string
     {
         $table = $this->sanitizeTable($table);
         if (!$table) return 'id';
-        // Admin/user override from metadata (prefer indexed if possible)
         try {
             $meta = CtoTableMeta::query()->where('table_name', $table)->first();
             if ($meta && $meta->search_column && Schema::hasColumn($table, $meta->search_column)) {
                 return $meta->search_column;
             }
         } catch (\Throwable $e) {
-            // ignore
         }
         $label = $this->guessLabelColumn($table);
         if (Schema::hasColumn($table, $label) && $this->isIndexed($table, $label)) return $label;
-        // Try common indexed fallbacks
         foreach (['name', 'title', 'label', 'email', 'region_name', 'site_name', 'code'] as $c) {
             if (Schema::hasColumn($table, $c) && $this->isIndexed($table, $c)) return $c;
         }
-        // As a safety, ensure the returned column exists
         if (Schema::hasColumn($table, $label)) return $label;
         $pk = $this->primaryKey($table);
         return Schema::hasColumn($table, $pk) ? $pk : (Schema::getColumnListing($table)[0] ?? 'id');
     }
 
     /**
-     * Return an ordered list of label columns to compose a human-readable label.
-     * Priority:
-     * - cto_table_meta.display_template.columns
-     * - Special-case tables (e.g., regional_lookup)
-     * - Obvious candidates (*_name, name, title, code)
-     * - Fallback to the detected label column
+     * Mengembalikan list kolom label untuk menyusun label yang human-readable.
+     *
+     * Prioritas:
+     * 1. cto_table_meta.display_template.columns
+     * 2. Special-case tables (misal: regional_lookup)
+     * 3. Kandidat obvious: *_name, name, title, code
+     * 4. Fallback ke detected label column
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return array<int, string> Array nama kolom untuk label composite
      */
     public function labelColumns(string $table): array
     {
         $table = $this->sanitizeTable($table);
         if (!$table) return [];
 
-        // 1) Metadata-defined composite columns
         try {
             $meta = CtoTableMeta::query()->where('table_name', $table)->first();
             if ($meta && is_array($meta->display_template) && !empty($meta->display_template['columns'])) {
@@ -295,16 +400,13 @@ class DynamicSchemaService
                 return array_values(array_filter($cols, fn($c) => $c && Schema::hasColumn($table, $c)));
             }
         } catch (\Throwable $e) {
-            // ignore
         }
 
-        // 2) Special-case known tables
         if ($table === 'regional_lookup') {
             $candidates = ['regional_name', 'tsel_reg', 'tlk_reg', 'island'];
             return array_values(array_filter($candidates, fn($c) => Schema::hasColumn($table, $c)));
         }
 
-        // 3) Obvious candidates: *_name, name, title, code
         $listing = Schema::getColumnListing($table);
         $nameLike = array_values(array_filter($listing, fn($c) => str_ends_with($c, '_name')));
         if (!empty($nameLike)) return $nameLike;
@@ -312,21 +414,29 @@ class DynamicSchemaService
             if (Schema::hasColumn($table, $c)) return [$c];
         }
 
-        // 4) Fallback: use preferred label column heuristic
         $fallback = $this->guessLabelColumn($table);
         return $fallback ? [$fallback] : [];
     }
 
     /**
-     * Compose a human-friendly label for a row of a given table using metadata/template
-     * and sensible fallbacks. Accepts a row as associative array (column => value).
+     * Menyusun label yang human-friendly untuk row dari tabel tertentu.
+     *
+     * Method ini akan:
+     * - Menggunakan template eksplisit dari metadata jika tersedia
+     * - Menangani special-case table (misal: regional_lookup)
+     * - Menggabungkan labelColumns dengan separator " - "
+     * - Fallback ke label column atau primary key
+     *
+     * @param string $table Nama tabel
+     * @param array<string, mixed> $row Data row sebagai associative array (kolom => nilai)
+     * 
+     * @return string Label yang sudah diformat
      */
     public function composeLabel(string $table, array $row): string
     {
         $table = $this->sanitizeTable($table);
         if (!$table) return '';
 
-        // Prefer explicit template from metadata if available
         try {
             $meta = CtoTableMeta::query()->where('table_name', $table)->first();
             if ($meta && is_array($meta->display_template) && !empty($meta->display_template['template'])) {
@@ -334,10 +444,8 @@ class DynamicSchemaService
                 if ($rendered !== null && $rendered !== '') return $rendered;
             }
         } catch (\Throwable $e) {
-            // ignore
         }
 
-        // Special-case: regional_lookup => "regional_name - tsel_reg - island"
         if ($table === 'regional_lookup') {
             $parts = [];
             foreach (['regional_name', 'tsel_reg', 'tlk_reg', 'island'] as $c) {
@@ -347,7 +455,6 @@ class DynamicSchemaService
             if ($s !== '') return $s;
         }
 
-        // Otherwise, join labelColumns with " - "
         $cols = $this->labelColumns($table);
         if (!empty($cols)) {
             $vals = [];
@@ -358,7 +465,6 @@ class DynamicSchemaService
             if ($s !== '') return $s;
         }
 
-        // Fallback to label column or primary key
         $labelCol = $this->guessLabelColumn($table);
         if ($labelCol && isset($row[$labelCol])) return (string) $row[$labelCol];
         $pk = $this->primaryKey($table);
@@ -366,7 +472,13 @@ class DynamicSchemaService
     }
 
     /**
-     * List VARCHAR/CHAR/TEXT-like columns for a table (excluding PK), useful for inline create forms.
+     * Mendapatkan list kolom VARCHAR/CHAR/TEXT dari tabel (excluding PK).
+     *
+     * Berguna untuk form inline create atau field text-based lainnya.
+     *
+     * @param string $table Nama tabel
+     * 
+     * @return array<int, string> Array nama kolom bertipe text
      */
     public function varcharTextColumns(string $table): array
     {
@@ -386,7 +498,19 @@ class DynamicSchemaService
     }
 
     /**
-     * Return enum/set options for a column (MySQL/MariaDB only). Empty array if not enum/set or unavailable.
+     * Mengembalikan opsi enum/set untuk kolom tertentu (MySQL/MariaDB only).
+     *
+     * Method ini akan:
+     * - Query INFORMATION_SCHEMA untuk COLUMN_TYPE
+     * - Parse enum('a','b','c') atau set('a','b') menjadi ['a','b','c']
+     * - Menangani escaped quotes dalam nilai
+     *
+     * Data di-cache untuk performa optimal.
+     *
+     * @param string $table Nama tabel
+     * @param string $column Nama kolom
+     * 
+     * @return array<int, string> Array opsi enum/set, atau empty array jika tidak applicable
      */
     public function enumOptions(string $table, string $column): array
     {
@@ -405,11 +529,9 @@ class DynamicSchemaService
             if (!str_starts_with($type, 'enum(') && !str_starts_with($type, 'set(')) {
                 return [];
             }
-            // Parse enum('a','b','c') or set('a','b') -> ['a','b','c']
             $m = [];
             if (!preg_match("/^(enum|set)\((.*)\)$/i", $type, $m)) return [];
             $inner = $m[2] ?? '';
-            // Split by comma, taking into account quoted strings
             $vals = [];
             $current = '';
             $inQuote = false;
@@ -417,9 +539,8 @@ class DynamicSchemaService
             for ($i = 0; $i < $len; $i++) {
                 $ch = $inner[$i];
                 if ($ch === "'") {
-                    // Toggle quote or handle escaped quote
                     if ($inQuote && ($i + 1 < $len) && $inner[$i + 1] === "'") {
-                        $current .= "'"; // escaped quote
+                        $current .= "'";
                         $i++;
                     } else {
                         $inQuote = !$inQuote;
@@ -437,7 +558,14 @@ class DynamicSchemaService
         });
     }
 
-    /** Check if a given column on a table is a foreign key column. */
+    /**
+     * Memeriksa apakah kolom tertentu pada tabel adalah foreign key column.
+     *
+     * @param string $table Nama tabel
+     * @param string $column Nama kolom yang akan diperiksa
+     * 
+     * @return bool True jika kolom adalah foreign key
+     */
     public function isForeignKeyColumn(string $table, string $column): bool
     {
         $table = $this->sanitizeTable($table);
@@ -447,8 +575,19 @@ class DynamicSchemaService
     }
 
     /**
-     * Render a label from a display template using the provided row array.
-     * Unknown placeholders are removed. Nulls become empty strings.
+     * Merender label dari display template menggunakan data row yang diberikan.
+     *
+     * Method ini akan:
+     * - Mengganti placeholder {{kolom}} dengan nilai dari row
+     * - Menghapus placeholder yang tidak dikenal
+     * - Mengubah null menjadi string kosong
+     *
+     * Format template: "{{name}} - {{code}}" dengan data row akan menjadi "John - ABC"
+     *
+     * @param array<string, mixed>|null $template Template dengan key 'template' dan 'columns'
+     * @param array<string, mixed> $row Data row sebagai associative array
+     * 
+     * @return string|null Label yang sudah dirender, atau null jika template tidak valid
      */
     public function renderTemplateLabel(?array $template, array $row): ?string
     {
@@ -462,7 +601,16 @@ class DynamicSchemaService
         return trim((string)$s);
     }
 
-    /** Quick index existence check (MySQL/MariaDB only), cached. */
+    /**
+     * Memeriksa apakah kolom ter-index (MySQL/MariaDB only).
+     *
+     * Data di-cache untuk performa optimal.
+     *
+     * @param string $table Nama tabel
+     * @param string $column Nama kolom
+     * 
+     * @return bool True jika kolom memiliki index
+     */
     public function isIndexed(string $table, string $column): bool
     {
         $table = $this->sanitizeTable($table);
@@ -480,7 +628,20 @@ class DynamicSchemaService
         });
     }
 
-    /** Invalidate cached schema metadata for a table. */
+    /**
+     * Menginvalidasi cache metadata skema untuk tabel tertentu.
+     *
+     * Method ini akan menghapus semua cache terkait:
+     * - Metadata kolom
+     * - Foreign keys
+     * - Primary key
+     * - Label column
+     * - Auto-increment flag
+     *
+     * @param string $tableName Nama tabel yang cache-nya akan di-invalidate
+     * 
+     * @return void
+     */
     public function invalidateTableCache(string $tableName): void
     {
         $table = $this->sanitizeTable($tableName);
@@ -490,31 +651,36 @@ class DynamicSchemaService
         Cache::forget('cto:schema:fks:' . $db . ':' . $table);
         Cache::forget('cto:schema:pk:' . $db . ':' . $table);
         Cache::forget('cto:schema:label_col:' . $db . ':' . $table);
-        // Best-effort: also drop current pk auto_inc flag if resolvable
         try {
             $pk = $this->primaryKey($table);
             Cache::forget('cto:schema:pk:auto_inc:' . $db . ':' . $table . ':' . $pk);
         } catch (\Throwable $e) {
-            // ignore
         }
     }
 
     /**
-     * Detect and store primary_key_column and label_column for a table into cto_table_meta.
-     * Idempotent: upserts the row and preserves explicit user overrides.
+     * Mendeteksi dan menyimpan primary_key_column dan label_column ke cto_table_meta.
+     *
+     * Method ini bersifat idempotent:
+     * - Melakukan upsert pada row metadata
+     * - Mempertahankan nilai yang sudah di-set user (tidak overwrite)
+     * - Mendeteksi primary key via helper yang sudah ada
+     * - Memilih default label menggunakan heuristik yang sama
+     * - Menginvalidasi cache yang relevan setelah update
+     *
+     * @param string $tableName Nama tabel yang akan dipopulasi metadatanya
+     * 
+     * @return void
      */
     public function populateMetaForTable(string $tableName): void
     {
         $table = $this->sanitizeTable($tableName);
         if (!$table || !Schema::hasTable($table)) return;
 
-        // Detect primary key via existing helper (cached and information_schema-backed)
         $pk = $this->primaryKey($table);
 
-        // Choose a default label via the same heuristics used at runtime
         $label = $this->guessLabelColumn($table);
 
-        // Upsert into meta, but do not overwrite user-set values if already present
         try {
             $existing = CtoTableMeta::query()->where('table_name', $table)->first();
             if ($existing) {
@@ -538,10 +704,8 @@ class DynamicSchemaService
                 );
             }
 
-            // Invalidate caches relevant to this table so new meta is picked up quickly
             Cache::forget('cto:schema:label_col:' . DB::getDatabaseName() . ':' . $table);
         } catch (\Throwable $e) {
-            // Swallow errors to avoid breaking table creation flows; logs can be added if needed
         }
     }
 }

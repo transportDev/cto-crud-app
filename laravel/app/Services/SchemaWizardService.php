@@ -7,10 +7,34 @@ use App\Services\Dynamic\DynamicSchemaService;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Service untuk mengelola wizard penambahan field dan relasi ke tabel database.
+ *
+ * Service ini menyediakan fungsionalitas untuk:
+ * - Menganalisis field dan relasi yang akan ditambahkan
+ * - Menghasilkan preview migration PHP dan SQL
+ * - Mendeteksi potensi masalah dan risiko
+ * - Menerapkan perubahan skema langsung ke database (tanpa file migration)
+ * - Menambahkan kolom dengan berbagai tipe data dan constraint
+ * - Menambahkan foreign key constraint dengan berbagai action (CASCADE, SET NULL, dll)
+ * - Menyimpan metadata untuk display template dan search column
+ * - Melakukan invalidasi cache setelah perubahan skema
+ * - Menangani idempotency untuk menghindari duplikasi
+ * - Compensating action untuk rollback jika terjadi error
+ *
+ * @package App\Services
+ */
 class SchemaWizardService
 {
     /**
-     * Normalize relation type selection to one of the supported types.
+     * Menormalisasi pilihan tipe relasi ke salah satu tipe yang didukung.
+     *
+     * Tipe yang didukung: bigInteger, integer, mediumInteger, smallInteger, tinyInteger
+     * Default: bigInteger
+     *
+     * @param string|null $t Tipe relasi yang diminta
+     *
+     * @return string Tipe relasi yang valid (default: 'bigInteger')
      */
     protected function resolveRelationType(?string $t): string
     {
@@ -20,8 +44,15 @@ class SchemaWizardService
     }
 
     /**
-     * Build the PHP Blueprint expression for an unsigned integer FK column.
-     * Example: $table->unsignedBigInteger('user_id')->nullable()
+     * Membangun ekspresi PHP Blueprint untuk kolom FK unsigned integer.
+     *
+     * Contoh output: $table->unsignedBigInteger('user_id')->nullable()
+     *
+     * @param string $name Nama kolom
+     * @param string $relationType Tipe relasi (bigInteger, integer, dll)
+     * @param bool $nullable Apakah kolom boleh NULL
+     *
+     * @return string Ekspresi Blueprint PHP
      */
     protected function relationPhpColumn(string $name, string $relationType, bool $nullable): string
     {
@@ -41,7 +72,11 @@ class SchemaWizardService
     }
 
     /**
-     * Get the MySQL column type for the selected FK integer (always UNSIGNED).
+     * Mendapatkan tipe kolom MySQL untuk FK integer yang dipilih (selalu UNSIGNED).
+     *
+     * @param string $relationType Tipe relasi
+     *
+     * @return string Tipe kolom MySQL (contoh: 'BIGINT UNSIGNED')
      */
     protected function relationSqlColumnType(string $relationType): string
     {
@@ -55,6 +90,35 @@ class SchemaWizardService
         };
     }
 
+    /**
+     * Menganalisis array field dan relasi yang akan ditambahkan ke tabel.
+     *
+     * Method ini akan:
+     * - Mengiterasi semua item (field atau relasi)
+     * - Menghasilkan preview PHP Blueprint dan SQL
+     * - Mengumpulkan warnings dari setiap item
+     * - Menentukan impact level (safe/risky)
+     * - Menangani foreign key dengan action (onUpdate, onDelete)
+     *
+     * @param string $table Nama tabel target
+     * @param array<int, array<string, mixed>> $items Array item yang berisi:
+     *        - kind: 'field' atau 'relation'
+     *        - name: nama kolom
+     *        - type: tipe data (untuk field)
+     *        - nullable: boolean
+     *        - relation_type: tipe integer untuk FK (untuk relasi)
+     *        - references_table: tabel yang direferensikan (untuk relasi)
+     *        - references_column: kolom yang direferensikan (untuk relasi)
+     *        - on_update: action untuk ON UPDATE (untuk relasi)
+     *        - on_delete: action untuk ON DELETE (untuk relasi)
+     *
+     * @return array{
+     *     migration_php: string,
+     *     estimated_sql: string,
+     *     warnings: array<int, string>,
+     *     impact: string
+     * } Array berisi migration preview dan warnings
+     */
     public function analyze(string $table, array $items): array
     {
         $fieldSvc = app(SchemaFieldService::class);
@@ -69,7 +133,7 @@ class SchemaWizardService
                 $phpLines[] = preg_replace('/^Schema::table\([^\n]+\n\s{4}/', '    ', $res['migration_php']);
                 $sqlLines[] = $res['estimated_sql'];
                 $warnings = array_merge($warnings, $res['warnings']);
-            } else { // relation
+            } else {
                 $nullable = (bool)($i['nullable'] ?? true);
                 $relationType = $this->resolveRelationType($i['relation_type'] ?? null);
                 $unsignedPhp = $this->relationPhpColumn($i['name'], $relationType, $nullable);
@@ -104,42 +168,64 @@ class SchemaWizardService
         ];
     }
 
-    // Migration file generation removed.
-
+    /**
+     * Menjalankan migrasi Laravel yang pending.
+     *
+     * @return void
+     */
     public function runMigrations(): void
     {
         Artisan::call('migrate', ['--force' => true]);
     }
 
     /**
-     * Apply schema changes directly to the database without creating migration files.
-     * Better for admin tools - immediate feedback, no duplicate migration issues.
+     * Menerapkan perubahan skema langsung ke database tanpa membuat file migration.
+     *
+     * Pendekatan ini lebih baik untuk admin tools karena:
+     * - Feedback langsung ke user
+     * - Menghindari duplikasi file migration
+     * - Tidak memerlukan commit ke version control
+     *
+     * Method ini menangani:
+     * - Penambahan field dengan berbagai tipe dan constraint
+     * - Penambahan relasi dengan foreign key
+     * - Penyimpanan metadata (display_template, search_column)
+     * - Invalidasi cache setelah perubahan
+     * - Idempotency check untuk menghindari duplikasi
+     * - Compensating action untuk rollback partial state
+     *
+     * Note: MySQL melakukan implicit commit untuk banyak operasi DDL (ALTER TABLE),
+     * jadi DB::transaction() tidak efektif dan bisa menghasilkan error misleading.
+     * Sebagai gantinya, perubahan diterapkan secara sequential dengan defensive
+     * idempotent checks dan compensating cleanup untuk menghindari partial state.
+     *
+     * @param string $table Nama tabel target
+     * @param array<int, array<string, mixed>> $items Array item untuk ditambahkan
+     *
+     * @return array{
+     *     success: bool,
+     *     applied: array<int, string>,
+     *     errors: array<int, string>
+     * } Hasil penerapan perubahan
      */
     public function applyDirectChanges(string $table, array $items): array
     {
         $applied = [];
         $errors = [];
 
-        // Note: MySQL performs implicit commits for many DDL operations (e.g. ALTER TABLE),
-        // so wrapping these in a DB::transaction() can yield misleading errors such as
-        // "There is no active transaction" even when the change succeeded. Instead we
-        // apply changes sequentially with defensive idempotent checks and compensating
-        // cleanup to avoid leaving partial state on failure.
         foreach ($items as $i) {
             try {
                 if (($i['kind'] ?? 'field') === 'field') {
                     $this->addFieldDirectly($table, $i);
                     $applied[] = "Added/verified field '{$i['name']}' on table '{$table}'";
-                } else { // relation
+                } else {
                     $this->addRelationDirectly($table, $i);
                     $applied[] = "Added/verified foreign key '{$i['name']}' on table '{$table}'";
 
-                    // Persist label columns (preferred) and search column for the referenced table
                     $refTable = $i['references_table'] ?? null;
                     if ($refTable) {
                         try {
                             $payload = [];
-                            // Prefer storing explicit columns; generate template only for backward-compat reads
                             $labelCols = $i['label_columns'] ?? [];
                             if (is_array($labelCols) && !empty($labelCols)) {
                                 $payload['display_template'] = [
@@ -151,7 +237,6 @@ class SchemaWizardService
                             if (!empty($i['search_column'])) {
                                 $payload['search_column'] = (string) $i['search_column'];
                             } elseif (!empty($payload['display_template']['columns'])) {
-                                // default search column to first label column
                                 $payload['search_column'] = (string) ($payload['display_template']['columns'][0] ?? null);
                             }
 
@@ -162,7 +247,6 @@ class SchemaWizardService
                                 );
                             }
                         } catch (\Throwable $_e) {
-                            // Non-fatal: metadata persistence errors should not block schema apply
                         }
                     }
                 }
@@ -171,13 +255,11 @@ class SchemaWizardService
             }
         }
 
-        // Invalidate schema cache and repopulate meta so UI reflects changes immediately
         try {
             $schemaSvc = app(DynamicSchemaService::class);
             $schemaSvc->invalidateTableCache($table);
             $schemaSvc->populateMetaForTable($table);
         } catch (\Throwable $e) {
-            // ignore
         }
 
         return [
@@ -187,11 +269,26 @@ class SchemaWizardService
         ];
     }
 
+    /**
+     * Menambahkan field langsung ke tabel tanpa migration file.
+     *
+     * Method ini bersifat idempotent - akan skip jika kolom sudah ada.
+     *
+     * Menangani:
+     * - Berbagai tipe data (string, integer, decimal, boolean, date, datetime, json, dll)
+     * - Nullable constraint
+     * - Default value (termasuk boolean)
+     * - Index (unique, index, fulltext)
+     *
+     * @param string $table Nama tabel
+     * @param array<string, mixed> $field Konfigurasi field
+     *
+     * @return void
+     */
     protected function addFieldDirectly(string $table, array $field): void
     {
-        // Skip if the column already exists (idempotent)
         if (\Illuminate\Support\Facades\Schema::hasColumn($table, $field['name'])) {
-            return; // already present
+            return;
         }
 
         \Illuminate\Support\Facades\Schema::table($table, function (\Illuminate\Database\Schema\Blueprint $table) use ($field) {
@@ -204,7 +301,6 @@ class SchemaWizardService
             $default = $field['default'] ?? null;
             $defaultBool = $field['default_bool'] ?? null;
 
-            // Build column based on type
             $column = match ($type) {
                 'string' => $table->string($name, $length ?: 255),
                 'integer' => $table->integer($name),
@@ -218,19 +314,16 @@ class SchemaWizardService
                 default => $table->string($name),
             };
 
-            // Apply modifiers
             if ($nullable) {
                 $column->nullable();
             }
 
-            // Handle defaults
             if ($default !== null && $default !== '') {
                 $column->default($default);
             } elseif ($type === 'boolean' && $defaultBool !== null) {
                 $column->default($defaultBool);
             }
 
-            // Apply indexes
             if (!empty($field['unique'])) {
                 $table->unique($name);
             } elseif (!empty($field['index']) && $field['index'] === 'index') {
@@ -241,6 +334,32 @@ class SchemaWizardService
         });
     }
 
+    /**
+     * Menambahkan relasi (foreign key) langsung ke tabel tanpa migration file.
+     *
+     * Method ini menangani:
+     * 1. Memastikan kolom FK exists (jika belum ada, buat kolom unsigned integer)
+     * 2. Memastikan constraint FK exists (jika belum ada, buat constraint)
+     * 3. Menangani action ON UPDATE dan ON DELETE
+     * 4. Invalidasi cache untuk kedua tabel (source dan referenced)
+     * 5. Compensating action: drop kolom jika pembuatan FK gagal
+     *
+     * Method ini bersifat idempotent dengan mengecek keberadaan kolom dan constraint.
+     *
+     * @param string $table Nama tabel source
+     * @param array<string, mixed> $relation Konfigurasi relasi dengan keys:
+     *        - name: nama kolom FK
+     *        - nullable: boolean
+     *        - references_table: tabel yang direferensikan
+     *        - references_column: kolom yang direferensikan (default: 'id')
+     *        - relation_type: tipe integer (bigInteger, integer, dll)
+     *        - on_update: action untuk ON UPDATE (CASCADE, SET NULL, dll)
+     *        - on_delete: action untuk ON DELETE
+     *
+     * @return void
+     *
+     * @throws \Throwable Jika gagal membuat FK constraint
+     */
     protected function addRelationDirectly(string $table, array $relation): void
     {
         $column = $relation['name'];
@@ -251,7 +370,6 @@ class SchemaWizardService
 
         $createdColumn = false;
 
-        // 1) Ensure column exists
         if (!\Illuminate\Support\Facades\Schema::hasColumn($table, $column)) {
             \Illuminate\Support\Facades\Schema::table($table, function (\Illuminate\Database\Schema\Blueprint $t) use ($column, $nullable, $relationType) {
                 $method = match ($relationType) {
@@ -270,7 +388,6 @@ class SchemaWizardService
             $createdColumn = true;
         }
 
-        // 2) Ensure the FK constraint exists
         if (!$this->hasForeignKey($table, $column)) {
             try {
                 \Illuminate\Support\Facades\Schema::table($table, function (\Illuminate\Database\Schema\Blueprint $t) use ($column, $refTable, $refColumn, $relation) {
@@ -285,7 +402,6 @@ class SchemaWizardService
                         $foreign->onDelete($relation['on_delete']);
                     }
                 });
-                // Best-effort: invalidate cache for both tables (source + referenced)
                 try {
                     $schemaSvc = app(DynamicSchemaService::class);
                     $schemaSvc->invalidateTableCache($table);
@@ -293,11 +409,9 @@ class SchemaWizardService
                 } catch (\Throwable $_) {
                 }
             } catch (\Throwable $e) {
-                // Compensating action: drop the newly created column if FK creation failed
                 if ($createdColumn) {
                     try {
                         \Illuminate\Support\Facades\Schema::table($table, function (\Illuminate\Database\Schema\Blueprint $t) use ($column) {
-                            // dropForeign if any was partially added (defensive)
                             try {
                                 $t->dropForeign([$column]);
                             } catch (\Throwable $_) {
@@ -305,7 +419,6 @@ class SchemaWizardService
                             $t->dropColumn($column);
                         });
                     } catch (\Throwable $_) {
-                        // ignore cleanup failure
                     }
                 }
                 throw $e;
@@ -314,7 +427,15 @@ class SchemaWizardService
     }
 
     /**
-     * Check if a foreign key exists for the given table+column.
+     * Memeriksa apakah foreign key constraint exists untuk tabel dan kolom tertentu.
+     *
+     * Method ini query INFORMATION_SCHEMA.KEY_COLUMN_USAGE untuk mencari
+     * foreign key yang existing.
+     *
+     * @param string $table Nama tabel
+     * @param string $column Nama kolom
+     *
+     * @return bool True jika foreign key exists, false jika tidak atau query error
      */
     protected function hasForeignKey(string $table, string $column): bool
     {
@@ -327,7 +448,6 @@ class SchemaWizardService
             );
             return !empty($result);
         } catch (\Throwable $e) {
-            // If the metadata query fails, be conservative and return false so we attempt to add it.
             return false;
         }
     }

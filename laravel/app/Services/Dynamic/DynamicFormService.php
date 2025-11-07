@@ -12,18 +12,48 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Arr;
 
 /**
- * DynamicFormService
+ * Service untuk membangun komponen form Filament dan aturan validasi Laravel secara dinamis.
  *
- * Builds Filament form components and Laravel validation rules from schema metadata.
- * - Respects PK immutability and auto-increment on create
- * - Provides safe FK async selects using configurable label columns and bounded queries
+ * Service ini menyediakan fungsionalitas untuk:
+ * - Membuat komponen form berdasarkan metadata skema database
+ * - Menghormati immutability primary key dan auto-increment pada mode create
+ * - Menyediakan select foreign key yang aman dengan async search
+ * - Menggunakan label column yang dapat dikonfigurasi dan query yang terbatas
+ * - Mendukung inline create untuk relasi foreign key (khusus admin)
+ * - Menghasilkan aturan validasi Laravel yang sesuai dengan tipe data
+ *
+ * @package App\Services\Dynamic
  */
 class DynamicFormService
 {
+    /**
+     * Membuat instance service dengan dependency injection.
+     *
+     * @param DynamicSchemaService $schema Service untuk menangani operasi skema database
+     */
     public function __construct(
         protected DynamicSchemaService $schema
     ) {}
 
+    /**
+     * Membangun array komponen form Filament berdasarkan skema tabel.
+     *
+     * Method ini akan:
+     * - Mengiterasi semua kolom dalam tabel
+     * - Melewati kolom timestamp sistem (created_at, updated_at, deleted_at)
+     * - Menyembunyikan auto-increment PK pada mode create
+     * - Menonaktifkan PK pada mode edit
+     * - Membuat komponen form yang sesuai dengan tipe data
+     * - Menangani foreign key dengan Select searchable dan preload
+     * - Mendukung inline create untuk FK (khusus admin)
+     * - Menerapkan validasi dan constraint berdasarkan metadata
+     *
+     * @param string $table Nama tabel yang akan dibangun formnya
+     * @param bool $isEdit True jika form untuk edit, false untuk create
+     * @param bool $forView True jika form untuk view-only (semua field disabled)
+     * 
+     * @return array<int, \Filament\Forms\Components\Component> Array komponen form Filament
+     */
     public function buildForm(string $table, bool $isEdit, bool $forView = false): array
     {
         $cols = $this->schema->columns($table);
@@ -38,7 +68,7 @@ class DynamicFormService
             $length = $meta['length'] ?? null;
 
             if (!$isEdit && $name === $pk && $this->schema->isPrimaryAutoIncrement($table)) {
-                continue; // hide auto-inc PK on create
+                continue;
             }
 
             if ($name === $pk && $isEdit) {
@@ -64,19 +94,16 @@ class DynamicFormService
                 default => Forms\Components\TextInput::make($name)->maxLength($length ?: 65535),
             };
 
-            // FK handling when column looks like *_id and is not PK
             if ($this->looksLikeForeignKey($table, $name)) {
                 $fkMap = $this->schema->foreignKeys($table);
                 $refTable = $fkMap[$name]['referenced_table'] ?? Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
                 $refTable = $this->schema->sanitizeTable($refTable);
                 $refPk = $fkMap[$name]['referenced_column'] ?? 'id';
                 if ($refTable && Schema::hasTable($refTable)) {
-                    // Ensure we use a valid PK column on the referenced table
                     if (!Schema::hasColumn($refTable, $refPk)) {
                         $refPk = $this->schema->primaryKey($refTable);
                     }
 
-                    // Resolve template/columns/search from metadata and fallbacks
                     $meta = null;
                     $displayTemplate = null;
                     $searchCol = null;
@@ -99,10 +126,8 @@ class DynamicFormService
                         ? $searchCol
                         : $this->schema->bestSearchColumn($refTable);
 
-                    // Determine if the FK column is integer or string type
                     $isIntegerType = in_array($type, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true);
 
-                    // Build Filament Select with search and preload
                     $component = Select::make($name)
                         ->label($this->humanizeFkLabel($name))
                         ->searchable()
@@ -118,7 +143,6 @@ class DynamicFormService
                             $out = [];
                             foreach ($rows as $r) {
                                 $rowArr = (array) $r;
-                                // Ensure the key matches the expected type
                                 $key = $rowArr[$refPk];
                                 if ($isIntegerType && is_numeric($key)) {
                                     $key = (int) $key;
@@ -138,7 +162,6 @@ class DynamicFormService
                             $out = [];
                             foreach ($rows as $r) {
                                 $rowArr = (array) $r;
-                                // Ensure the key matches the expected type
                                 $key = $rowArr[$refPk];
                                 if ($isIntegerType && is_numeric($key)) {
                                     $key = (int) $key;
@@ -149,14 +172,12 @@ class DynamicFormService
                         })
                         ->getOptionLabelUsing(function ($value) use ($refTable, $refPk, $isIntegerType) {
                             if ($value === null || $value === '') return null;
-                            // Ensure we query with the correct type
                             if ($isIntegerType && is_numeric($value)) {
                                 $value = (int) $value;
                             }
                             $row = DB::table($refTable)->where($refPk, $value)->first();
                             return $row ? app(DynamicSchemaService::class)->composeLabel($refTable, (array)$row) : (string) $value;
                         })
-                        // Ensure the state is properly formatted when loaded
                         ->afterStateHydrated(function (Select $component, $state) use ($isIntegerType) {
                             if ($state !== null && $state !== '') {
                                 if ($isIntegerType && is_numeric($state)) {
@@ -166,7 +187,6 @@ class DynamicFormService
                                 }
                             }
                         })
-                        // Ensure proper type casting before saving
                         ->beforeStateDehydrated(function (Select $component, $state) use ($isIntegerType) {
                             if ($state !== null && $state !== '') {
                                 if ($isIntegerType && is_numeric($state)) {
@@ -177,15 +197,14 @@ class DynamicFormService
                             }
                         });
 
-                    // Inline create support (admin-only)
                     $component->createOptionForm(function () use ($refTable) {
                         $pk = $this->schema->primaryKey($refTable);
                         $colsMeta = $this->schema->columns($refTable);
                         $schema = [];
                         foreach ($colsMeta as $colName => $colMeta) {
-                            if ($colName === $pk) continue; // skip PK
-                            if ($this->schema->isForeignKeyColumn($refTable, $colName)) continue; // skip FK to avoid recursion
-                            if (in_array($colName, ['created_at', 'updated_at', 'deleted_at'], true)) continue; // skip system columns
+                            if ($colName === $pk) continue;
+                            if ($this->schema->isForeignKeyColumn($refTable, $colName)) continue;
+                            if (in_array($colName, ['created_at', 'updated_at', 'deleted_at'], true)) continue;
 
                             $ctype = strtolower((string)($colMeta['type'] ?? 'string'));
                             $nullable = (bool)($colMeta['nullable'] ?? false);
@@ -193,7 +212,6 @@ class DynamicFormService
 
                             $field = null;
                             if (in_array($ctype, ['string', 'varchar', 'char', 'text', 'mediumtext', 'longtext'])) {
-                                // Textual
                                 if (in_array($ctype, ['text', 'mediumtext', 'longtext'])) {
                                     $field = Forms\Components\Textarea::make($colName)->rows(3);
                                 } else {
@@ -222,7 +240,6 @@ class DynamicFormService
                             $schema[] = $field;
                         }
 
-                        // Ensure at least one field when metadata is minimal
                         if (empty($schema)) {
                             $labelCol = $this->schema->guessLabelColumn($refTable);
                             if ($labelCol && $labelCol !== $pk) {
@@ -235,7 +252,6 @@ class DynamicFormService
                         return $schema;
                     });
 
-                    // Admin-only visibility for inline create button
                     $component->createOptionAction(function (FormAction $action) {
                         $action->visible(function () {
                             $u = \Illuminate\Support\Facades\Auth::user();
@@ -247,9 +263,7 @@ class DynamicFormService
                         return $action;
                     });
 
-                    // Auto-select the newly created record
                     $component->createOptionUsing(function (array $data) use ($refTable, $refPk) {
-                        // Insert and return PK
                         $isAuto = app(DynamicSchemaService::class)->isPrimaryAutoIncrement($refTable);
                         if ($isAuto) {
                             $id = DB::table($refTable)->insertGetId($data);
@@ -259,14 +273,11 @@ class DynamicFormService
                         return $data[$refPk] ?? null;
                     });
 
-                    // Helper text for user
                     $component->helperText("Pilih atau cari dari tabel {$refTable}. Admin dapat menambah data baru.");
                 }
             }
 
-            // Prefer humanized FK label for *_id columns, otherwise default to column name
             if ($this->looksLikeForeignKey($table, $name)) {
-                // label already set above for FK select
             } else {
                 $component->label(Str::headline($name));
             }
@@ -281,6 +292,23 @@ class DynamicFormService
         return $components;
     }
 
+    /**
+     * Membangun array aturan validasi Laravel berdasarkan skema tabel.
+     *
+     * Method ini akan:
+     * - Mengiterasi semua kolom dalam tabel
+     * - Melewati kolom timestamp sistem
+     * - Melewati primary key pada mode edit
+     * - Menerapkan aturan berdasarkan tipe data (integer, numeric, date, array, string)
+     * - Menambahkan constraint panjang maksimal untuk tipe string
+     * - Menambahkan validasi exists untuk foreign key
+     * - Menangani nullable/required sesuai metadata kolom
+     *
+     * @param string $table Nama tabel yang akan dibangun aturan validasinya
+     * @param bool $isEdit True jika untuk mode edit, false untuk create
+     * 
+     * @return array<string, array<int, string>> Array aturan validasi Laravel
+     */
     public function buildRules(string $table, bool $isEdit): array
     {
         $cols = $this->schema->columns($table);
@@ -290,7 +318,6 @@ class DynamicFormService
 
         foreach ($cols as $name => $meta) {
             if (in_array($name, ['created_at', 'updated_at', 'deleted_at'], true)) continue;
-            // On edit, never validate PK (it's disabled & not dehydrated in the form)
             if ($isEdit && $name === $pk) continue;
             if (!$isEdit && $name === $pk && $this->schema->isPrimaryAutoIncrement($table)) continue;
 
@@ -301,7 +328,6 @@ class DynamicFormService
             $colRules = [];
             $colRules[] = $nullable ? 'nullable' : 'required';
 
-            // Apply type-based validation
             if (in_array($type, ['int', 'integer', 'tinyint', 'smallint', 'mediumint', 'bigint'], true)) {
                 $colRules[] = 'integer';
             } elseif (in_array($type, ['decimal', 'float', 'double'], true)) {
@@ -311,14 +337,12 @@ class DynamicFormService
             } elseif (in_array($type, ['json'], true)) {
                 $colRules[] = 'array';
             } else {
-                // Default to string for varchar, char, text, etc.
                 $colRules[] = 'string';
                 if ($length && is_int($length)) {
                     $colRules[] = 'max:' . $length;
                 }
             }
 
-            // If it's a foreign key, add exists validation
             if ($this->looksLikeForeignKey($table, $name)) {
                 $refTable = $fks[$name]['referenced_table'] ?? Str::of($name)->beforeLast('_id')->snake()->plural()->toString();
                 $refTable = $this->schema->sanitizeTable($refTable);
@@ -340,21 +364,40 @@ class DynamicFormService
         return $rules;
     }
 
+    /**
+     * Memeriksa apakah kolom terlihat seperti foreign key.
+     *
+     * Kolom dianggap sebagai foreign key jika:
+     * - Berakhiran dengan '_id'
+     * - Bukan merupakan primary key dari tabel
+     *
+     * @param string $table Nama tabel
+     * @param string $column Nama kolom yang akan diperiksa
+     * 
+     * @return bool True jika kolom terlihat seperti foreign key
+     */
     protected function looksLikeForeignKey(string $table, string $column): bool
     {
         return Str::endsWith($column, '_id') && $column !== $this->schema->primaryKey($table);
     }
 
     /**
-     * Turn an FK column like `regional_fe_id` into a friendly label like `Regional FE`.
-     * - Strips trailing _id
-     * - Converts snake_case to Headline
-     * - Uppercases common abbreviations (FE, IP, URL, ID)
+     * Mengubah nama kolom foreign key menjadi label yang lebih ramah pengguna.
+     *
+     * Proses transformasi:
+     * - Menghapus suffix '_id'
+     * - Mengubah snake_case menjadi Headline Case
+     * - Mengubah singkatan umum menjadi uppercase (FE, IP, URL, ID, SKU, IMEI)
+     *
+     * Contoh: 'regional_fe_id' => 'Regional FE'
+     *
+     * @param string $fkColumn Nama kolom foreign key
+     * 
+     * @return string Label yang sudah diformat
      */
     protected function humanizeFkLabel(string $fkColumn): string
     {
         $base = Str::of($fkColumn)->beforeLast('_id')->replace('_', ' ')->headline()->toString();
-        // Uppercase common abbreviations when they appear as separate tokens
         $abbrs = ['Fe' => 'FE', 'Ip' => 'IP', 'Url' => 'URL', 'Id' => 'ID', 'Sku' => 'SKU', 'Imei' => 'IMEI'];
         foreach ($abbrs as $needle => $upper) {
             $base = preg_replace('/\b' . preg_quote($needle, '/') . '\b/u', $upper, $base);
