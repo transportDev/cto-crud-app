@@ -269,6 +269,10 @@
             }
         }
 
+        form.querySelectorAll(".hidden-clone-input").forEach((el) =>
+            el.remove()
+        );
+
         populateNopSelect();
         if (prefill.nop != null) setNopValue(prefill.nop);
         else setNopValue("");
@@ -357,6 +361,19 @@
                 "siteid_fe",
                 "comment",
             ];
+            const readonlyFields = [
+                "requestor",
+                "regional",
+                "siteid_ne",
+                "transport_type",
+                "pl_status",
+                "transport_category",
+                "pl_value",
+                "link_capacity",
+                "link_util",
+                "link_owner",
+                "jarak_odp",
+            ];
             for (const el of form.elements) {
                 if (isFormControl(el)) {
                     if (!el.disabled && allowedFields.includes(el.name)) {
@@ -441,6 +458,10 @@
                     el.disabled = !allowedFields.includes(el.name);
                 }
             }
+
+            form.querySelectorAll(".hidden-clone-input").forEach((el) =>
+                el.remove()
+            );
         }
         populateNopSelect();
         setNopValue("");
@@ -470,6 +491,27 @@
         }
         try {
             const fd = new FormData(form);
+
+            const requiredDisabledFields = [
+                "requestor",
+                "regional",
+                "siteid_ne",
+                "transport_type",
+                "pl_status",
+                "transport_category",
+                "pl_value",
+                "link_capacity",
+                "link_util",
+                "link_owner",
+                "jarak_odp",
+            ];
+            requiredDisabledFields.forEach((fieldName) => {
+                const field = form.elements[fieldName];
+                if (field && field.disabled && field.value) {
+                    fd.set(fieldName, field.value);
+                }
+            });
+
             const cekNimInput = getCekNimOrderInput();
             if (cekNimInput) {
                 const actual = cekNimInput.dataset.actualValue ?? "";

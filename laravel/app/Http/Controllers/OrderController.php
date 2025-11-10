@@ -75,7 +75,7 @@ class OrderController extends Controller
             'pl_value' => 'nullable|string|max:20',
             'link_capacity' => 'nullable|integer',
             'link_util' => 'nullable|numeric',
-            'link_owner' => 'nullable|string|max:20',
+            'link_owner' => 'nullable|string|max:50',
             'propose_solution' => 'nullable|string|max:100',
             'remark' => 'nullable|string|max:100',
             'jarak_odp' => 'nullable|numeric',
