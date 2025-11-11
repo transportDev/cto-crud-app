@@ -64,9 +64,9 @@ return [
 
     /**
      * Cache TTL untuk widget kapasitas DL mendekati maksimum (detik)
-     * Default: 6 jam (21600 detik)
+     
      */
-    'capacity_cache_ttl' => env('CTO_CAPACITY_CACHE_TTL', 21600),
+    'capacity_cache_ttl' => env('CTO_CAPACITY_CACHE_TTL', 300),
 
     /**
      * Jumlah minggu default untuk analisis kapasitas
