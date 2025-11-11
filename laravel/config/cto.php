@@ -43,12 +43,12 @@ return [
      * Cache TTL untuk data sites dashboard (detik)
      * Default: 6 jam (21600 detik)
      */
-    'dashboard_sites_cache_ttl' => env('CTO_DASHBOARD_SITES_CACHE_TTL', 21600),
+    'dashboard_sites_cache_ttl' => env('CTO_DASHBOARD_SITES_CACHE_TTL', 300),
 
     /**
      * Cache TTL untuk map enrichment kapasitas dari mysql3 (detik)
      */
-    'dashboard_capacity_enrich_cache_ttl' => env('CTO_DASHBOARD_CAPACITY_ENRICH_CACHE_TTL', 10800),
+    'dashboard_capacity_enrich_cache_ttl' => env('CTO_DASHBOARD_CAPACITY_ENRICH_CACHE_TTL', 300),
 
     /**
      * Cache TTL untuk data pie chart order summary (detik)
